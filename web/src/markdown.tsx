@@ -260,10 +260,29 @@ function fencedCode(lines: string[], start: number): { html: string; next: numbe
   // **閉じるまでは図にしない。** 途中まで届いたMermaidは必ず構文として壊れており、
   // 描こうとすると1デルタごとに解析エラーが出る。閉じるまでコードとして見せ、
   // 閉じた瞬間に図へ差し替える（コードブロックの扱いと同じ考え方）
-  if (language === "mermaid" && closed && source.trim()) {
+  if (closed && source.trim() && isMermaid(language, source)) {
     return { html: diagramFigure(source), next: i };
   }
   return { html: code, next: i };
+}
+
+/** Mermaidの図の宣言。先頭行がこれなら、言語名が無くても図として扱う。 */
+const MERMAID_HEADER =
+  /^(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b|^(?:sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|quadrantChart|gitGraph)\b/;
+
+/**
+ * Mermaidかどうかを判定する。
+ *
+ * **言語名の指定を当てにしない。** 実際に、モデルが図の中身は正しく書きながら
+ * 言語名を付けずにコードブロックへ入れてきた（2026-09-12に本番で確認）。
+ * 言語名だけで判定すると、その場合は図にならずコードのまま出る。
+ * 別の言語名が明示されているときは尊重する（bashのコマンドを図にしないため）。
+ */
+function isMermaid(language: string, source: string): boolean {
+  if (language === "mermaid") return true;
+  if (language !== "") return false;
+  const first = source.split("\n").find((line) => line.trim())?.trim() ?? "";
+  return MERMAID_HEADER.test(first);
 }
 
 /**

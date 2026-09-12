@@ -31,7 +31,14 @@ import { ReferenceSummary } from "./components/ReferenceSummary";
 import { SelectMenu, type SelectOption } from "./components/SelectMenu";
 import { Spinner } from "./components/Spinner";
 import { Toast } from "./components/Toast";
-import { APP_LIMITS, APP_URLS, LAYOUT_QUERY, STICK_TO_BOTTOM_PX, UI_TIMING } from "./config";
+import {
+  APP_LIMITS,
+  APP_URLS,
+  LAYOUT_QUERY,
+  SHOW_SCROLL_BOTTOM_PX,
+  STICK_TO_BOTTOM_PX,
+  UI_TIMING,
+} from "./config";
 import {
   AnswerFeedback,
   FEEDBACK_ANSWER_MAX,
@@ -235,6 +242,8 @@ export default function App() {
   // 下端に張り付いているか。読み返すために上へ動かした人を、回答が届くたびに
   // 引き戻さないための判定である
   const stickToBottom = useRef(true);
+  // 末尾から離れて読んでいるか。離れている間だけ、入力欄の上へ戻るボタンを出す
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   // 実行中の質問。停止ボタンから中断する
   const inflight = useRef<AbortController | null>(null);
   const headerMenus = useRef<HTMLDivElement>(null);
@@ -388,8 +397,28 @@ export default function App() {
     };
     follow();
     area.addEventListener("scroll", follow, { passive: true });
-    return () => area.removeEventListener("scroll", follow);
-  }, [view, authed]);
+
+    // 末尾へ戻るボタンの出し入れ。
+    //
+    // **スクロール位置の計算ではなく、末尾の目印が見えているかで判定する。**
+    // 回答は1文字ずつ伸びるので、スクロール操作が無いまま下端が遠ざかる。
+    // 計算方式だと、そのとき測り直す仕掛けを別に持つことになる。
+    const sentinel = bottom.current;
+    const watcher = sentinel
+      ? new IntersectionObserver(([entry]) => setAwayFromBottom(!entry.isIntersecting), {
+          root: area,
+          // 目印の少し手前でも「末尾にいる」とみなす。ぴったり0だと、
+          // 1px足りないだけでボタンが出たり消えたりする
+          rootMargin: `0px 0px ${SHOW_SCROLL_BOTTOM_PX}px 0px`,
+        })
+      : null;
+    watcher?.observe(sentinel!);
+
+    return () => {
+      area.removeEventListener("scroll", follow);
+      watcher?.disconnect();
+    };
+  }, [view, authed, activeChatId]);
 
   // 往復が増えたときとチャットを切り替えたときだけ、滑らかに送る
   const turnCount = activeChat?.turns.length ?? 0;
@@ -1754,6 +1783,24 @@ export default function App() {
         </main>
 
         <div className="composer-area">
+          {/* 長い回答を上の方で読んでいると、末尾へ戻る手段がスクロールしかない。
+              離れているときだけ出し、押したら追従も再開する */}
+          {awayFromBottom && (
+            <button
+              type="button"
+              className="scroll-bottom"
+              aria-label="最新の回答へ移動"
+              title="最新の回答へ移動"
+              onClick={() => {
+                stickToBottom.current = true;
+                bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v13m0 0 6-6m-6 6-6-6" />
+              </svg>
+            </button>
+          )}
           {/* 回答モードは毎回変えるものではない。名前と説明で1行を占めていたが、
               選択肢そのもの（auto / thinking）で見分けが付くので畳んだ。
               説明は選択肢の中に残してあるので、開けば読める */}

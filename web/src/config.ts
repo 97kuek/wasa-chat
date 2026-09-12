@@ -34,3 +34,11 @@ export const LAYOUT_QUERY = {
 } as const;
 
 export const STICK_TO_BOTTOM_PX = 80;
+
+/**
+ * 末尾へ戻るボタンを出し始める距離。
+ *
+ * 追従をやめる距離（STICK_TO_BOTTOM_PX）より広くとる。同じ値にすると、
+ * 追従が切れた瞬間にボタンが出て、**回答が伸びるたびに出入りして点滅する。**
+ */
+export const SHOW_SCROLL_BOTTOM_PX = 160;

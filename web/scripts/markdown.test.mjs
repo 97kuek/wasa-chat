@@ -319,3 +319,25 @@ test("mermaid以外の言語指定はこれまでどおりコードブロック�
   assert.match(html, /<pre class="code-block"><code>python rebuild\.py/);
   assert.doesNotMatch(html, /<figure/);
 });
+
+// 本番で、モデルが図の中身は正しく書きながら言語名を付けずにコードブロックへ
+// 入れてきた（2026-09-12）。言語名だけで判定すると図にならない。
+test("言語名が無くても、先頭行が図の宣言なら図にする", () => {
+  for (const head of ["flowchart TD", "graph LR", "sequenceDiagram", "stateDiagram-v2"]) {
+    const html = renderWithin("```\n" + head + "\n  A --> B\n```");
+    assert.match(html, /<figure class="diagram"/, `${head} が図にならない`);
+  }
+});
+
+test("先頭行が図の宣言でなければコードブロックのままにする", () => {
+  for (const body of ["python rebuild.py", "graph = build()", "flowchart は図の記法です"]) {
+    const html = renderWithin("```\n" + body + "\n```");
+    assert.doesNotMatch(html, /<figure/, `${body} を図にしてはいけない`);
+  }
+});
+
+// 言語名が明示されているものは尊重する。bashのコマンドを図にしない
+test("別の言語名が付いていれば図にしない", () => {
+  const html = renderWithin("```bash\ngraph LR\n```");
+  assert.doesNotMatch(html, /<figure/);
+});

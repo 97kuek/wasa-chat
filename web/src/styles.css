@@ -1765,6 +1765,40 @@ button:disabled {
   margin-inline: auto;
 }
 
+/* 末尾へ戻るボタン。入力欄のすぐ上、本文の中央に浮かせる。
+   `.composer-area > *` が幅と中央寄せを効かせてしまうので、それより強い
+   指定で打ち消す（同じ詳細度だと、書いた順で結果が変わって危うい） */
+.composer-area > .scroll-bottom {
+  position: absolute;
+  z-index: 3;
+  top: 2px;
+  left: 50%;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  margin-inline: 0;
+  padding: 0;
+  transform: translateX(-50%);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 2px 10px rgb(35 31 28 / 12%);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.composer-area > .scroll-bottom:hover { background: var(--surface-soft); }
+
+.scroll-bottom svg {
+  width: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .response-mode-bar {
   display: flex;
   align-items: center;
