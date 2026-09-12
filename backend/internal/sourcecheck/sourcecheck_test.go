@@ -63,7 +63,7 @@ func TestCheckComparesWikiRevisionsAndSiteDates(t *testing.T) {
 		{ID: "s2", Source: "site", Title: "更新記事", URL: base + "/updated", LastEdited: "2026-08-01"},
 		{ID: "s3", Source: "site", Title: "削除記事", URL: base + "/removed", LastEdited: "2026-08-01"},
 	}}
-	checker := New(ix, base+"/wiki", "reader", "password")
+	checker := New(index.NewLive(ix, "test"), base+"/wiki", "reader", "password")
 	checker.interval = 0
 	checker.sitemaps = []string{base + "/page.xml", base + "/post.xml"}
 	checker.client.Transport = transport

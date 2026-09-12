@@ -185,7 +185,7 @@ func run(t *testing.T, assistant *state.Assistant) (*stubLLM, []Source, string) 
 	// モデルは毎回「両方のページを使いたい」と答える。絞り込みが効いていなければ
 	// 両方が文脈に入るので、範囲外が確実に落ちているかを見分けられる
 	client := &stubLLM{titles: []string{"電装班", "WASAについて知る"}}
-	pipe := New(testIndex(t), client)
+	pipe := New(index.NewLive(testIndex(t), "test"), client)
 
 	var sources []Source
 	var answer strings.Builder
@@ -238,7 +238,7 @@ func TestRunWithoutAssistantKeepsEverything(t *testing.T) {
 
 func TestRunUsesRecentConversationWithoutTreatingItAsEvidence(t *testing.T) {
 	client := &stubLLM{titles: []string{"電装班"}}
-	pipe := New(testIndex(t), client)
+	pipe := New(index.NewLive(testIndex(t), "test"), client)
 	history := []ConversationTurn{{
 		Question: "ESP32について教えて", Answer: "以前の回答には誤りがあるかもしれません。",
 	}}
@@ -258,7 +258,7 @@ func TestRunUsesRecentConversationWithoutTreatingItAsEvidence(t *testing.T) {
 
 func TestRunResolvesTailDesignFollowUp(t *testing.T) {
 	client := &stubLLM{titles: []string{"電装班"}}
-	pipe := New(testIndex(t), client)
+	pipe := New(index.NewLive(testIndex(t), "test"), client)
 	history := []ConversationTurn{
 		{Question: "空力設計の手順を説明して", Answer: "主翼の設計手順を説明しました。"},
 		{Question: "尾翼設計について書かれていないようですが", Answer: "尾翼設計では飛行力学の式を理解します。"},
@@ -274,7 +274,7 @@ func TestRunResolvesTailDesignFollowUp(t *testing.T) {
 
 func TestResponseModeUsesDifferentProfilesByStage(t *testing.T) {
 	client := &stubLLM{titles: []string{"電装班"}}
-	pipe := New(testIndex(t), client)
+	pipe := New(index.NewLive(testIndex(t), "test"), client)
 	var resolved string
 	if err := pipe.RunWithMode(context.Background(), "電装班について教えて", nil, nil, ModeStandard, func(event Event) {
 		if event.Type == "mode" {
@@ -293,7 +293,7 @@ func TestResponseModeUsesDifferentProfilesByStage(t *testing.T) {
 
 func TestRunEmitsStageTimings(t *testing.T) {
 	client := &stubLLM{titles: []string{"電装班"}}
-	pipe := New(testIndex(t), client)
+	pipe := New(index.NewLive(testIndex(t), "test"), client)
 	var stages []string
 	timings := map[string]int64{}
 
@@ -337,7 +337,7 @@ func TestAutoResponseModeRaisesEffortOnlyForComplexQuestions(t *testing.T) {
 
 func TestGenericCanAnswerSeparatedGeneralKnowledgeWithoutPages(t *testing.T) {
 	client := &stubLLM{}
-	pipe := New(testIndex(t), client)
+	pipe := New(index.NewLive(testIndex(t), "test"), client)
 	var answer strings.Builder
 
 	if err := pipe.Run(context.Background(), "量子色力学とは？", nil, nil, func(event Event) {
@@ -357,9 +357,9 @@ func TestGenericCanAnswerSeparatedGeneralKnowledgeWithoutPages(t *testing.T) {
 
 func TestSelectPagesAddsNormalizedIdentifierMatch(t *testing.T) {
 	client := &stubLLM{titles: []string{"人物ページ"}}
-	pipe := New(testIdentifierIndex(t), client)
+	pipe := New(index.NewLive(testIdentifierIndex(t), "test"), client)
 
-	pages, err := pipe.selectPages(context.Background(), "TR797とは何ですか？", nil, llm.ProfileFast, nil)
+	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "TR797とは何ですか？", nil, llm.ProfileFast, nil)
 	if err != nil {
 		t.Fatalf("ページ選択が失敗: %v", err)
 	}
@@ -372,8 +372,8 @@ func TestSelectPagesAddsNormalizedIdentifierMatch(t *testing.T) {
 }
 
 func TestDirectTitlePagesPrioritizesGenerationSpecificPages(t *testing.T) {
-	pipe := New(testDirectTitleIndex(t), &stubLLM{})
-	pages := pipe.directTitlePages("41stの空力設計と40代の空力設計は何が違いますか？", nil)
+	pipe := New(index.NewLive(testDirectTitleIndex(t), "test"), &stubLLM{})
+	pages := directTitlePages(pipe.Index(), "41stの空力設計と40代の空力設計は何が違いますか？", nil)
 	if len(pages) != 2 || pages[0].Title != "空力設計(40th)" || pages[1].Title != "空力設計(41st)" {
 		t.Fatalf("世代別ページが汎用ページより優先されていない: %+v", pages)
 	}
@@ -381,8 +381,8 @@ func TestDirectTitlePagesPrioritizesGenerationSpecificPages(t *testing.T) {
 
 func TestSelectPagesKeepsDirectTitleMatchAlongsideModelChoice(t *testing.T) {
 	client := &stubLLM{titles: []string{"人物ページ"}}
-	pipe := New(testDirectTitleIndex(t), client)
-	pages, err := pipe.selectPages(context.Background(), "HPA交流会の準備を教えてください", nil, llm.ProfileStandard, nil)
+	pipe := New(index.NewLive(testDirectTitleIndex(t), "test"), client)
+	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "HPA交流会の準備を教えてください", nil, llm.ProfileStandard, nil)
 	if err != nil {
 		t.Fatalf("ページ選択が失敗: %v", err)
 	}
@@ -412,8 +412,8 @@ func TestLinkQuestionFindsWikiMainPageAndExcludesOfficialSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &stubLLM{titles: []string{"公式サイト"}}
-	pipe := New(ix, client)
-	pages, err := pipe.selectPages(context.Background(), "WASA Wikiには情報通信学科の過去問がありますか？リンクを教えてください", nil, llm.ProfileStandard, nil)
+	pipe := New(index.NewLive(ix, "test"), client)
+	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "WASA Wikiには情報通信学科の過去問がありますか？リンクを教えてください", nil, llm.ProfileStandard, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,16 +451,16 @@ func TestWhereQuestionFindsLinkPageWithoutPushingOutTitleMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe := New(ix, &stubLLM{})
+	pipe := New(index.NewLive(ix, "test"), &stubLLM{})
 
 	// 1. 「どこにありますか」でもリンクを含むページを保持する
-	got := pipe.deterministicPages("情報通信学科の過去問はどこにありますか？", nil)
+	got := deterministicPages(pipe.Index(), "情報通信学科の過去問はどこにありますか？", nil)
 	if len(got) == 0 || got[0].Title != "メインページ" {
 		t.Fatalf("「どこ」の質問でリンク先ページを保持できていない: %+v", titlesOf(got))
 	}
 
 	// 2. タイトルが一致するページを、本文スコアで押し出さない
-	got = pipe.deterministicPages("合宿で39代はどこに行きましたか？", nil)
+	got = deterministicPages(pipe.Index(), "合宿で39代はどこに行きましたか？", nil)
 	if len(got) == 0 || got[0].Title != "合宿" {
 		t.Fatalf("実在タイトルの一致が本文スコアに負けている: %+v", titlesOf(got))
 	}
@@ -478,7 +478,7 @@ func titlesOf(pages []*index.Page) []string {
 // 「引き継ぎWiki」のような実在しない出典名を作れてしまう（docs/02）。
 func TestAnswerPromptLeavesSourceListToServer(t *testing.T) {
 	client := &stubLLM{titles: []string{"電装班"}}
-	pipe := New(testIndex(t), client)
+	pipe := New(index.NewLive(testIndex(t), "test"), client)
 	if err := pipe.Run(context.Background(), "電装班について", nil, nil, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestAnswerPromptLeavesSourceListToServer(t *testing.T) {
 // 回答末尾の「参照」に出す節は、索引のパンくずをそのまま渡す。
 func TestPagesEventCarriesReadSections(t *testing.T) {
 	client := &stubLLM{titles: []string{"電装班"}}
-	pipe := New(testIndex(t), client)
+	pipe := New(index.NewLive(testIndex(t), "test"), client)
 	var last []Source
 	err := pipe.Run(context.Background(), "電装班について", nil, nil, func(e Event) {
 		if e.Type == "pages" {
@@ -522,11 +522,11 @@ func TestPagesEventCarriesReadSections(t *testing.T) {
 }
 
 func TestDirectTitlePagesRespectsScopeAndASCIIWordBoundary(t *testing.T) {
-	pipe := New(testDirectTitleIndex(t), &stubLLM{})
-	if pages := pipe.directTitlePages("RPMの計測方法", nil); len(pages) != 0 {
+	pipe := New(index.NewLive(testDirectTitleIndex(t), "test"), &stubLLM{})
+	if pages := directTitlePages(pipe.Index(), "RPMの計測方法", nil); len(pages) != 0 {
 		t.Fatalf("短いPMがRPMの部分一致で拾われた: %+v", pages)
 	}
-	if pages := pipe.directTitlePages("HPA交流会について", &state.Assistant{Team: "空力"}); len(pages) != 0 {
+	if pages := directTitlePages(pipe.Index(), "HPA交流会について", &state.Assistant{Team: "空力"}); len(pages) != 0 {
 		t.Fatalf("アシスタントの参照範囲外が残った: %+v", pages)
 	}
 }
@@ -536,7 +536,7 @@ func TestRunKeepsIdentifierChunkAfterNarrowing(t *testing.T) {
 		titles:   []string{"人物ページ"},
 		chunkIDs: []string{"p1-c0"}, // LLMは型番のない節だけを選ぶ
 	}
-	pipe := New(testIdentifierIndex(t), client)
+	pipe := New(index.NewLive(testIdentifierIndex(t), "test"), client)
 
 	if err := pipe.Run(context.Background(), "TR797とは何ですか？", nil, nil, func(Event) {}); err != nil {
 		t.Fatalf("Run が失敗: %v", err)
@@ -551,7 +551,7 @@ func TestRunResolvesIdentifierFromRecentConversation(t *testing.T) {
 		titles:   []string{"人物ページ"},
 		chunkIDs: []string{"p1-c0"},
 	}
-	pipe := New(testIdentifierIndex(t), client)
+	pipe := New(index.NewLive(testIdentifierIndex(t), "test"), client)
 	history := []ConversationTurn{{
 		Question: "循環分布には何がありますか？",
 		Answer:   "完全楕円循環分布とTR-797型分布があります。",
@@ -583,7 +583,7 @@ func TestRunReportsEmptyScope(t *testing.T) {
 func TestRunKeepsTOCCacheable(t *testing.T) {
 	ix := testIndex(t)
 	var cached []string
-	pipe := New(ix, &cacheProbe{inner: &stubLLM{titles: []string{"電装班"}}, seen: &cached})
+	pipe := New(index.NewLive(ix, "test"), &cacheProbe{inner: &stubLLM{titles: []string{"電装班"}}, seen: &cached})
 	for _, a := range []*state.Assistant{nil, {Name: "電装", Instruction: "簡潔に", Team: "電装"}} {
 		if err := pipe.Run(context.Background(), "質問", nil, a, func(Event) {}); err != nil {
 			t.Fatalf("Run が失敗: %v", err)
@@ -624,7 +624,7 @@ func (c *cacheProbe) Name() string { return "probe" }
 func TestRunScopedTOCHidesWikiSection(t *testing.T) {
 	ix := testIndexWithTOC(t, "# 目次\n\n## 引き継ぎWiki（部内限定）全1ページ\n\n- **電装班** 部内限定の秘密\n\n## 公式サイト（一般公開 wasa-birdman.com）全1ページ\n\n- **WASAについて知る** 団体紹介\n")
 	client := &stubLLM{titles: []string{"WASAについて知る"}}
-	pipe := New(ix, &cacheProbe{inner: client, seen: new([]string)})
+	pipe := New(index.NewLive(ix, "test"), &cacheProbe{inner: client, seen: new([]string)})
 
 	if err := pipe.Run(context.Background(), "WASAとは", nil, &state.Assistant{
 		Name: "対外説明", Instruction: "ですます調", Origin: "site",
@@ -644,8 +644,7 @@ func TestRunScopedTOCHidesWikiSection(t *testing.T) {
 // 目次の見出しが変わって分割できないときは、全体を渡すのではなく目次なしにする。
 func TestSiteTOCFailsClosed(t *testing.T) {
 	ix := testIndexWithTOC(t, "# 目次\n\n見出しの形式が変わった\n")
-	pipe := New(ix, &stubLLM{})
-	if got := pipe.scopedTOC(&state.Assistant{Origin: "site"}); got != "" {
+	if got := scopedTOC(ix, &state.Assistant{Origin: "site"}); got != "" {
 		t.Errorf("分割できないのに目次を渡した: %q", got)
 	}
 }
@@ -659,8 +658,8 @@ func TestSelectChunksRejectsOutOfScopeIDs(t *testing.T) {
 	if !ok {
 		t.Fatal("下準備のページが無い")
 	}
-	pipe := New(ix, &stubLLM{chunkIDs: []string{"p1-c0"}}) // 選択外のWikiの節
-	got, err := pipe.selectChunks(context.Background(), "質問", []*index.Page{site}, llm.ProfileStandard, nil)
+	pipe := New(index.NewLive(ix, "test"), &stubLLM{chunkIDs: []string{"p1-c0"}}) // 選択外のWikiの節
+	got, err := pipe.selectChunks(context.Background(), ix, "質問", []*index.Page{site}, llm.ProfileStandard, nil)
 	if err != nil {
 		t.Fatalf("selectChunks が失敗: %v", err)
 	}
@@ -754,7 +753,7 @@ func TestSiteTOCStopsAtNextOrigin(t *testing.T) {
 		"\n## 公式サイト（一般公開 wasa-birdman.com）全500ページ\n- **WASAについて知る** 団体紹介\n" +
 		"\n## フライトシミュレータのガイド（FlightEnvironmentEmulator）全32ページ\n- **FEEの使い方** ソフトの話\n"
 	ix := testIndexWithTOC(t, toc)
-	got := New(ix, &stubLLM{}).scopedTOC(&state.Assistant{Origin: "site"})
+	got := scopedTOC(ix, &state.Assistant{Origin: "site"})
 
 	if !strings.Contains(got, "WASAについて知る") {
 		t.Fatalf("公式サイトの節が落ちている:\n%s", got)

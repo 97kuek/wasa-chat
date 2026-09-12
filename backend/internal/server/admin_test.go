@@ -42,7 +42,7 @@ func TestAdminOverviewShowsNamesWithoutQuestionContentOrUserKeys(t *testing.T) {
 			StoreName: "メモリ", Revision: "test-revision", CodeVersion: "abcdef0",
 			IndexPublishedAt: "2026-08-11T01:00:00Z",
 		},
-		ix: &index.Index{Version: "index1234567"}, state: shared, startedAt: time.Now().UTC(),
+		live: index.NewLive(&index.Index{Version: "index1234567"}, "test"), state: shared, startedAt: time.Now().UTC(),
 	}
 	ctx := context.Background()
 	key := srv.userKey("42 Wasa Taro")
@@ -88,7 +88,7 @@ func TestAdminOverviewTracksPublishAndVerificationProgress(t *testing.T) {
 			APIDailyLimit: 500, AdminUsers: []string{"管理者"}, LLMName: "gemini/test-model",
 			SourceCheckAvailable: true, IndexPublishedAt: "2026-08-11T02:00:00Z",
 		},
-		ix: &index.Index{Version: "index1234567"}, state: shared, startedAt: time.Now().UTC(),
+		live: index.NewLive(&index.Index{Version: "index1234567"}, "test"), state: shared, startedAt: time.Now().UTC(),
 	}
 	if err := shared.SaveSourceCheck(context.Background(), state.SourceCheck{
 		CheckedAt: checkedAt, CheckedBy: "管理者", Changed: true,

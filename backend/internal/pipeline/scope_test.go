@@ -57,7 +57,6 @@ func TestFallbackPagesKeepsOriginFilter(t *testing.T) {
 		{Title: "作業場情報", Source: "wiki", Chunks: []index.Chunk{{ID: "p1-c1", Breadcrumb: "作業場情報 > 家賃"}}},
 		{Title: "作業場のしょうかい", Source: "site", Chunks: []index.Chunk{{ID: "p2-c1", Breadcrumb: "作業場のしょうかい > 家賃"}}},
 	}}
-	p := New(ix, nil)
 
 	cases := []struct {
 		name     string
@@ -71,7 +70,7 @@ func TestFallbackPagesKeepsOriginFilter(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var got []string
-			for _, pg := range p.fallbackPages(c.question, nil) {
+			for _, pg := range fallbackPages(ix, c.question, nil) {
 				got = append(got, pg.Title)
 			}
 			if len(got) != len(c.want) {

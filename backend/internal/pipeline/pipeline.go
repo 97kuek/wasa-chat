@@ -133,13 +133,19 @@ func profilesFor(mode ResponseMode) (selection, answer llm.Profile) {
 }
 
 type Pipeline struct {
-	ix  *index.Index
-	llm llm.Client
+	live *index.Live
+	llm  llm.Client
 }
 
-func New(ix *index.Index, client llm.Client) *Pipeline {
-	return &Pipeline{ix: ix, llm: client}
+func New(live *index.Live, client llm.Client) *Pipeline {
+	return &Pipeline{live: live, llm: client}
 }
+
+// Index はいまの索引を返す。**質問の途中で呼び直さないこと。**
+// 節IDは p{ページ}-c{連番} で索引を作り直すとずれ得るため、ページを選んだ索引と
+// 節を読む索引が違うと、選んだはずの節と別の本文を渡すことになる（M51）。
+// 入口で1回だけ取り、以降は引数で持ち回る。
+func (p *Pipeline) Index() *index.Index { return p.live.Current() }
 
 const selectPrompt = `---
 # 役割
@@ -230,12 +236,12 @@ const answerPrompt = `# タスク
 // **回答本文だけが範囲外のページ名やリード文を目次から拾える**。
 // 回答プロンプトが「目次を根拠に答えてよい」と明記しているため、ここは
 // 表示（「公式サイトのみ（部外に出せる情報だけ）」）と食い違う穴になる。
-func (p *Pipeline) scopedTOC(a *state.Assistant) string {
+func scopedTOC(ix *index.Index, a *state.Assistant) string {
 	if a == nil || a.Origin != "site" {
-		return p.ix.TOC
+		return ix.TOC
 	}
 	// 空になるのは目次の見出しが変わったとき。全体を渡すより目次なしを選ぶ
-	return p.ix.SiteTOC
+	return ix.SiteTOC
 }
 
 // inScope はアシスタントの参照範囲にページが入るかを返す。
@@ -281,6 +287,9 @@ func (p *Pipeline) RunWithMode(ctx context.Context, question string, history []C
 
 func (p *Pipeline) run(ctx context.Context, question string, history []ConversationTurn, assistant *state.Assistant, requested ResponseMode, images []llm.Image, emit func(Event)) error {
 	started := time.Now()
+	// **索引はここで1回だけ取る。** 途中で読み直すと、ページを選んだ索引と
+	// 節を読む索引が食い違い、選んだはずの節と別の本文を渡すことになる
+	ix := p.live.Current()
 	emitTiming := func(stage string, stageStarted time.Time) {
 		millis := time.Since(stageStarted).Milliseconds()
 		if millis < 1 {
@@ -308,14 +317,14 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 
 	searchQuestion := contextualQuestion(question, history)
 	pageStarted := time.Now()
-	pages, err := p.selectPages(ctx, searchQuestion, assistant, selectionProfile, onWait)
+	pages, err := p.selectPages(ctx, ix, searchQuestion, assistant, selectionProfile, onWait)
 	if err != nil {
 		return fmt.Errorf("ページ選択: %w", err)
 	}
 	if len(pages) == 0 {
 		// M2b で、モデルが空文字列のタイトルを3件返して照合で全滅し、
 		// 文脈ゼロになった事例があった。字面一致で拾い直す保険。
-		pages = p.fallbackPages(searchQuestion, assistant)
+		pages = fallbackPages(ix, searchQuestion, assistant)
 	}
 	emitTiming("pages", pageStarted)
 	if len(pages) == 0 {
@@ -348,7 +357,7 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 	emit(Event{Type: "pages", Pages: sources})
 
 	chunkStarted := time.Now()
-	chunks, err := p.selectChunks(ctx, searchQuestion, pages, selectionProfile, onWait)
+	chunks, err := p.selectChunks(ctx, ix, searchQuestion, pages, selectionProfile, onWait)
 	if err != nil {
 		return fmt.Errorf("節の絞り込み: %w", err)
 	}
@@ -366,7 +375,7 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 
 	var blocks []string
 	for _, id := range chunks {
-		c, pg, ok := p.ix.Chunk(id)
+		c, pg, ok := ix.Chunk(id)
 		if !ok {
 			continue
 		}
@@ -397,7 +406,7 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 	_, err = p.llm.Stream(ctx, llm.Request{
 		// 目次を先頭に置く。全体を見渡す問い（「最も情報が薄い分野は？」）は
 		// 選択ページの本文だけでは構造的に答えられない。キャッシュも効く
-		Cached: p.scopedTOC(assistant),
+		Cached: scopedTOC(ix, assistant),
 		// 利用者が書いた指示は Prompt に入る。それを上書きさせない規則は
 		// system 側へ回す（assistant.Guard のコメント参照）
 		System: assistantpkg.SystemGuard(assistant),
@@ -451,7 +460,7 @@ func contextualQuestion(question string, history []ConversationTurn) string {
 	return conversationSection(history) + "# 現在の質問\n\n" + question
 }
 
-func (p *Pipeline) selectPages(ctx context.Context, question string, a *state.Assistant, profile llm.Profile, onWait func(llm.WaitInfo)) ([]*index.Page, error) {
+func (p *Pipeline) selectPages(ctx context.Context, ix *index.Index, question string, a *state.Assistant, profile llm.Profile, onWait func(llm.WaitInfo)) ([]*index.Page, error) {
 	// 区分だけを絞る場合は全体目次を保ち、アシスタントごとのキャッシュ分裂を防ぐ。
 	// ただし「公式サイトのみ」は公開範囲の境界なので、scopedTOCで限定用目次へ
 	// 差し替える。どちらの場合もページ自体の除外は下のinScopeで決定的に行う。
@@ -461,7 +470,7 @@ func (p *Pipeline) selectPages(ctx context.Context, question string, a *state.As
 			"\n**このアシスタントは「%s」しか参照できません。範囲外のページを選んでも捨てられます。**\n", scope)
 	}
 	raw, err := p.llm.Complete(ctx, llm.Request{
-		Cached:    p.scopedTOC(a), // 目次は必ず先頭固定。キャッシュが効く条件
+		Cached:    scopedTOC(ix, a), // 目次は必ず先頭固定。キャッシュが効く条件
 		Prompt:    selectPrompt + question + scopeHint,
 		Schema:    selectSchema,
 		MaxTokens: 300,
@@ -491,13 +500,13 @@ func (p *Pipeline) selectPages(ctx context.Context, question string, a *state.As
 
 	// LLMがもっともらしい別ページを返しても、本文の型番一致と質問中の実在タイトルは
 	// 捨てない。決定的候補は2件までとし、質問全体を見るLLMにも必ず2枠残す。
-	for _, pg := range p.deterministicPages(question, a) {
+	for _, pg := range deterministicPages(ix, question, a) {
 		add(pg)
 	}
 	for _, title := range out.Titles {
 		// 実在しないページ名は落とす。M2a でモデルは班名・節名・
 		// 推測で作った名前を返してきた（index.Resolve のコメント参照）。
-		pg, ok := p.ix.Resolve(title)
+		pg, ok := ix.Resolve(title)
 		if !ok {
 			continue
 		}
@@ -512,10 +521,10 @@ func (p *Pipeline) selectPages(ctx context.Context, question string, a *state.As
 // deterministicPages は、モデルの揺らぎに任せず保持するページ候補を返す。
 // M18の33問では型番一致だけだと正解ページを保証できたのは2/31問だったが、
 // 質問中の実在タイトルを合流すると20/31問に増えた。
-func (p *Pipeline) deterministicPages(question string, a *state.Assistant) []*index.Page {
+func deterministicPages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
 	var out []*index.Page
 	seen := map[string]bool{}
-	for _, candidates := range [][]*index.Page{p.directTitlePages(question, a), p.identifierPages(question, a), p.linkPages(question, a)} {
+	for _, candidates := range [][]*index.Page{directTitlePages(ix, question, a), identifierPages(ix, question, a), linkPages(ix, question, a)} {
 		for _, pg := range candidates {
 			if pg == nil || seen[pg.Title] {
 				continue
@@ -597,7 +606,7 @@ func linkQuestionTerms(question string) []string {
 // linkPages はURLを尋ねる質問だけ、リンクを含む本文まで直接照合する。
 // 目次のリード文は全節を載せられず、メインページ後半の「過去問」は
 // index.jsonに存在していてもページ選択から落ちた実例がある。
-func (p *Pipeline) linkPages(question string, a *state.Assistant) []*index.Page {
+func linkPages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
 	if !linkRequestPattern.MatchString(question) {
 		return nil
 	}
@@ -611,8 +620,8 @@ func (p *Pipeline) linkPages(question string, a *state.Assistant) []*index.Page 
 		order int
 	}
 	var ranked []scored
-	for order := range p.ix.Pages {
-		pg := &p.ix.Pages[order]
+	for order := range ix.Pages {
+		pg := &ix.Pages[order]
 		if len(pg.Chunks) == 0 || !inScope(pg, a) || !questionAllowsOrigin(question, pg) {
 			continue
 		}
@@ -657,7 +666,7 @@ func normalizePageMention(value string) string {
 
 // directTitlePages は「HPA交流会」のように質問が実在ページ名を明記した場合の保険。
 // 40th / 40代は同じ世代とみなし、「40thの空力設計」の語順でも「空力設計(40th)」を拾う。
-func (p *Pipeline) directTitlePages(question string, a *state.Assistant) []*index.Page {
+func directTitlePages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
 	normalizedQuestion := normalizePageMention(question)
 	asciiWords := map[string]bool{}
 	for _, word := range asciiWordPattern.FindAllString(strings.ToLower(question), -1) {
@@ -669,8 +678,8 @@ func (p *Pipeline) directTitlePages(question string, a *state.Assistant) []*inde
 		order int
 	}
 	var ranked []scored
-	for order := range p.ix.Pages {
-		pg := &p.ix.Pages[order]
+	for order := range ix.Pages {
+		pg := &ix.Pages[order]
 		if len(pg.Chunks) == 0 || !inScope(pg, a) {
 			continue
 		}
@@ -720,7 +729,7 @@ func (p *Pipeline) directTitlePages(question string, a *state.Assistant) []*inde
 // identifierPages は質問中の型番を、ハイフンとアンダースコアの表記差を
 // 無視して本文全体から探す。索引は数MBなので、型番がある質問だけ
 // 総当たりしても検索基盤を増やす必要はない。
-func (p *Pipeline) identifierPages(question string, a *state.Assistant) []*index.Page {
+func identifierPages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
 	identifiers := questionIdentifiers(question)
 	if len(identifiers) == 0 {
 		return nil
@@ -732,8 +741,8 @@ func (p *Pipeline) identifierPages(question string, a *state.Assistant) []*index
 		order int
 	}
 	var ranked []scored
-	for i := range p.ix.Pages {
-		pg := &p.ix.Pages[i]
+	for i := range ix.Pages {
+		pg := &ix.Pages[i]
 		if len(pg.Chunks) == 0 || !inScope(pg, a) {
 			continue
 		}
@@ -785,7 +794,7 @@ func questionIdentifiers(question string) map[string]bool {
 
 // fallbackPages は LLM がページを1件も返せなかったときの保険。
 // 目次に対する素朴な字面一致。精度は高くないが「何も答えられない」よりはよい。
-func (p *Pipeline) fallbackPages(question string, a *state.Assistant) []*index.Page {
+func fallbackPages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
 	grams := map[string]bool{}
 	runes := []rune(question)
 	for i := 0; i+1 < len(runes); i++ {
@@ -797,8 +806,8 @@ func (p *Pipeline) fallbackPages(question string, a *state.Assistant) []*index.P
 		score int
 	}
 	var ranked []scored
-	for i := range p.ix.Pages {
-		pg := &p.ix.Pages[i]
+	for i := range ix.Pages {
+		pg := &ix.Pages[i]
 		// 保険の経路でも範囲外は出さない。ここを抜かすと、絞り込みが
 		// 「たいていは効く」だけの頼れない機能になる。
 		//
@@ -832,7 +841,7 @@ func (p *Pipeline) fallbackPages(question string, a *state.Assistant) []*index.P
 	return out
 }
 
-func (p *Pipeline) selectChunks(ctx context.Context, question string, pages []*index.Page, profile llm.Profile, onWait func(llm.WaitInfo)) ([]string, error) {
+func (p *Pipeline) selectChunks(ctx context.Context, ix *index.Index, question string, pages []*index.Page, profile llm.Profile, onWait func(llm.WaitInfo)) ([]string, error) {
 	var ids []string
 	total := 0
 	for _, pg := range pages {
@@ -864,7 +873,7 @@ func (p *Pipeline) selectChunks(ctx context.Context, question string, pages []*i
 	// パンくずは「ページ名 > 見出し > 見出し」で節の内容を要約しているため、これで足りる。
 	var catalog strings.Builder
 	for _, id := range ids {
-		if c, _, ok := p.ix.Chunk(id); ok {
+		if c, _, ok := ix.Chunk(id); ok {
 			fmt.Fprintf(&catalog, "%s\t%s（%d字）\n", c.ID, c.Breadcrumb, c.Chars)
 		}
 	}

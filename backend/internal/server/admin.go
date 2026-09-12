@@ -305,8 +305,8 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	indexVersion := ""
-	if s.ix != nil {
-		indexVersion = s.ix.Version
+	if s.live != nil {
+		indexVersion = s.live.Current().Version
 	}
 
 	quota := map[string]any{

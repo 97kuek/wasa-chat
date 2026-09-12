@@ -258,6 +258,23 @@ func main() {
 
 	// 管理画面と、他人のアシスタントを消す権限を持つ個人Wiki利用者。
 	// 共有管理者アカウントは監査と個別失効ができないため使わない。
+	// 索引を差し替えたら、再デプロイせずに取り込む。
+	//
+	// 以前は起動時に1回読むだけで、差し替え後は環境変数を動かして新しい
+	// リビジョンへ入れ替える必要があった（docs/07）。**資料を直してから
+	// 反映されるまでの待ちは、ここが作っていた。**
+	//
+	// 確認は世代番号だけを見るので1リクエストで済み、変わっていなければ
+	// 3.4MBは読まない。min-instances=0 なので使われていない間はこのループごと
+	// 止まるが、次のアクセスで起動したインスタンスは最新を読むため取りこぼさない。
+	live := index.NewLive(ix, source)
+	if every := time.Duration(envInt("INDEX_WATCH_SECONDS", 60)) * time.Second; every > 0 {
+		go live.Watch(context.Background(), every, nil)
+		log.Printf("索引の更新確認: %v ごと（%s）", every, source)
+	} else {
+		log.Println("索引の更新確認は無効です（INDEX_WATCH_SECONDS=0）")
+	}
+
 	admins := splitList(os.Getenv("ADMIN_USERS"))
 	if len(admins) == 0 {
 		log.Println("警告: ADMIN_USERS が未設定です。アシスタントは作成者本人しか削除できず、初期アシスタントも登録されません")
@@ -281,7 +298,7 @@ func main() {
 		AdminUsers:       admins,
 	}
 	updateChecker := sourcecheck.New(
-		ix, wikiAPI,
+		live, wikiAPI,
 		env("WIKI_UPDATE_USER", os.Getenv("WIKI_USER")),
 		env("WIKI_UPDATE_PASS", os.Getenv("WIKI_PASS")),
 	)
@@ -294,7 +311,7 @@ func main() {
 	if geminiClient != nil {
 		serverConfig.LLMStatus = geminiClient.RuntimeStatus
 	}
-	srv := server.New(serverConfig, ix, pipeline.New(ix, client), wiki.New(wikiAPI), sharedState)
+	srv := server.New(serverConfig, live, pipeline.New(live, client), wiki.New(wikiAPI), sharedState)
 
 	addr := ":" + env("PORT", "8080") // Cloud Run は PORT を渡してくる
 	log.Printf("起動: http://localhost%s", addr)

@@ -65,7 +65,7 @@ func spaHandler(dir string) http.Handler {
 
 type Server struct {
 	cfg       Config
-	ix        *index.Index
+	live      *index.Live
 	pipe      *pipeline.Pipeline
 	auth      *wiki.Authenticator
 	state     state.Store
@@ -73,8 +73,8 @@ type Server struct {
 	sourceMu  sync.Mutex
 }
 
-func New(cfg Config, ix *index.Index, pipe *pipeline.Pipeline, auth *wiki.Authenticator, shared state.Store) *Server {
-	return &Server{cfg: cfg, ix: ix, pipe: pipe, auth: auth, state: shared, startedAt: time.Now().UTC()}
+func New(cfg Config, live *index.Live, pipe *pipeline.Pipeline, auth *wiki.Authenticator, shared state.Store) *Server {
+	return &Server{cfg: cfg, live: live, pipe: pipe, auth: auth, state: shared, startedAt: time.Now().UTC()}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -98,7 +98,7 @@ func (s *Server) Routes() http.Handler {
 	// Cloud Runでは末尾が z の一部パスがプラットフォーム側で処理され、
 	// アプリまで届かず404になるため、予約されない /health を使う。
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		pages, chunks := s.ix.Stats()
+		pages, chunks := s.live.Current().Stats()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pages": pages, "chunks": chunks})
 	})
 
@@ -668,9 +668,10 @@ func (s *Server) handleListAssistants(w http.ResponseWriter, r *http.Request) {
 // 検索対象にならないページ（チャンクが無いもの）は数えない。目次には残るが
 // 本文を読めないため、「参照できる資料の数」としては誤解になる。
 func (s *Server) scopeCounts() map[string]int {
-	if s.ix == nil {
+	if s.live == nil {
 		return nil // 索引を持たない構成（テストの一部）では件数を出さない
 	}
+	ix := s.live.Current()
 	counts := make(map[string]int, len(assistant.Teams)*4)
 	origins := []string{"", "wiki", "site", "fee"}
 	teams := make([]string, 0, len(assistant.Teams)+1)
@@ -678,8 +679,8 @@ func (s *Server) scopeCounts() map[string]int {
 	for _, team := range assistant.Teams {
 		teams = append(teams, team.Value)
 	}
-	for i := range s.ix.Pages {
-		page := &s.ix.Pages[i]
+	for i := range ix.Pages {
+		page := &ix.Pages[i]
 		if len(page.Chunks) == 0 {
 			continue
 		}

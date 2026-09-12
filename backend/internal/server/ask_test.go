@@ -88,12 +88,12 @@ func TestAskCarriesTR797ContextFromHTTPToAnswerEvidence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ix := askE2EIndex(t)
+			live := index.NewLive(askE2EIndex(t), "test")
 			client := &askE2ELLm{}
 			shared := state.NewMemory()
 			srv := New(
 				Config{SessionSecret: "テスト用の固定鍵テスト用の固定鍵", DailyLimit: 30},
-				ix, pipeline.New(ix, client), nil, shared,
+				live, pipeline.New(live, client), nil, shared,
 			)
 			res := httptest.NewRecorder()
 			srv.Routes().ServeHTTP(res, srv.testRequest(http.MethodPost, "/api/ask", tc.body, "評価利用者"))

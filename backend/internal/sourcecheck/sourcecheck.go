@@ -30,7 +30,7 @@ var defaultSitemaps = []string{
 }
 
 type Checker struct {
-	index       *index.Index
+	live        *index.Live
 	wikiAPI     string
 	wikiUser    string
 	wikiPass    string
@@ -41,17 +41,17 @@ type Checker struct {
 	lastRequest time.Time
 }
 
-func New(ix *index.Index, wikiAPI, wikiUser, wikiPass string) *Checker {
+func New(live *index.Live, wikiAPI, wikiUser, wikiPass string) *Checker {
 	jar, _ := cookiejar.New(nil)
 	return &Checker{
-		index: ix, wikiAPI: wikiAPI, wikiUser: wikiUser, wikiPass: wikiPass,
+		live: live, wikiAPI: wikiAPI, wikiUser: wikiUser, wikiPass: wikiPass,
 		sitemaps: defaultSitemaps, interval: requestInterval,
 		client: &http.Client{Timeout: 60 * time.Second, Jar: jar},
 	}
 }
 
 func (c *Checker) Available() bool {
-	return c != nil && c.index != nil && c.wikiAPI != "" && c.wikiUser != "" && c.wikiPass != ""
+	return c != nil && c.live != nil && c.wikiAPI != "" && c.wikiUser != "" && c.wikiPass != ""
 }
 
 func (c *Checker) wait(ctx context.Context) error {
@@ -256,7 +256,7 @@ func sorted(items []string) []string {
 
 func (c *Checker) compareWiki(remote map[string]wikiRevision) state.SourceDelta {
 	local := map[string]wikiRevision{}
-	for _, page := range c.index.Pages {
+	for _, page := range c.live.Current().Pages {
 		if page.Source == "wiki" {
 			local[page.ID] = wikiRevision{Title: page.Title, Revid: page.Revid}
 		}
@@ -282,7 +282,7 @@ func (c *Checker) compareWiki(remote map[string]wikiRevision) state.SourceDelta 
 func (c *Checker) compareSite(remote map[string]string) state.SourceDelta {
 	type sitePage struct{ Title, Date string }
 	local := map[string]sitePage{}
-	for _, page := range c.index.Pages {
+	for _, page := range c.live.Current().Pages {
 		if page.Source == "site" {
 			local[page.URL] = sitePage{Title: page.Title, Date: page.LastEdited}
 		}

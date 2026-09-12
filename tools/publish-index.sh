@@ -2,8 +2,11 @@
 #
 # 索引（data/index.json と data/toc.md）を Cloud Storage へ差し替える。
 #
-#   sh tools/publish-index.sh            差し替えて、本番へ即時反映する
-#   sh tools/publish-index.sh --no-apply 差し替えるだけ（次の起動から反映される）
+#   sh tools/publish-index.sh            差し替えて、差し替え日時も記録する
+#   sh tools/publish-index.sh --no-apply 差し替えるだけ
+#
+# どちらでも本番への反映は同じ。動いているインスタンスがGCSの世代を見て
+# 自分で読み直すため、再デプロイもリビジョンの入れ替えも要らない。
 #
 # 索引をコンテナイメージへ焼き込んでいた頃は、資料を1文字直すだけでも
 # イメージの再ビルドとpushとデプロイが必要だった。ここを分けたので、
@@ -42,18 +45,21 @@ PY
 echo "差し替え先: $bucket"
 gcloud storage cp data/index.json data/toc.md "$bucket/"
 
+# 動いているインスタンスは INDEX_WATCH_SECONDS ごとにGCSの世代を見ており、
+# 変わっていれば**再デプロイなしで読み直す**。差し替えたらそれで終わり。
+#
+# 以前はここで環境変数を1つ動かして新しいリビジョンへ入れ替えていた。
+# 資料を直してから反映されるまでの待ちは、その手順が作っていた。
+echo
+echo "差し替えました。動いているインスタンスは次の更新確認で取り込みます。"
+
 if [ "${1:-}" = "--no-apply" ]; then
-  echo
-  echo "差し替えました。動いているインスタンスは古い索引を持ったままです。"
-  echo "次の起動（しばらく使われないと止まる）から反映されます。"
   exit 0
 fi
 
-# 起動中のインスタンスは索引をメモリに持っているため、差し替えただけでは
-# 変わらない。環境変数を1つ動かして新しいリビジョンへ入れ替える。
-# イメージは作り直さないので数十秒で終わる
+# 反映を待たずに確かめたいときのために、記録用の日時だけ更新する。
+# **索引そのものの反映には要らない。** 管理画面へ「いつ差し替えたか」を出すため
 echo
-echo "本番へ反映します（イメージの再ビルドはしません）"
 gcloud run services update "$service" \
   --region "$region" \
   --update-env-vars "INDEX_PUBLISHED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \

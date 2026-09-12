@@ -9,7 +9,7 @@ import (
 )
 
 func TestHealthEndpoint(t *testing.T) {
-	srv := &Server{ix: &index.Index{}}
+	srv := &Server{live: index.NewLive(&index.Index{}, "test")}
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	recorder := httptest.NewRecorder()
 
