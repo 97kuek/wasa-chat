@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -280,7 +281,33 @@ func main() {
 
 	sharedState, storeName, closeState := newStateStore()
 	defer closeState()
+	rpdLimit := envInt("GEMINI_RPD_LIMIT", 500)
 	if geminiClient != nil {
+		// **送る前に止める。** これまで GEMINI_RPD_LIMIT は管理画面へ残量を出すだけで、
+		// 上限に達しても止まるのは「429が返ってから」だった。日次上限の429は待っても
+		// 回復しない（太平洋時間0時まで）ので、そこまで全部の質問が失敗し続ける。
+		//
+		// 数え方は「実際にGeminiへ送った回数」で、質問数ではない。1質問で2〜3回送る。
+		// 記録が読めないときは**通す**。数えられないことを理由に全部止めると、
+		// Firestoreの一時的な不調で丸一日使えなくなる
+		geminiClient.SetAttemptGuard(func(ctx context.Context, model string) error {
+			if rpdLimit <= 0 {
+				return nil
+			}
+			day := pacificDay(time.Now().UTC())
+			usage, err := sharedState.ListAPIUsage(ctx, day)
+			if err != nil {
+				log.Printf("Gemini利用回数を読めません（送信は通します）: %v", err)
+				return nil
+			}
+			for _, row := range usage {
+				if row.Model == model && row.Requests >= rpdLimit {
+					return fmt.Errorf("%w（%s は本日%d回に達しました）",
+						llm.ErrQuotaGuard, model, row.Requests)
+				}
+			}
+			return nil
+		})
 		geminiClient.SetAttemptObserver(func(_ context.Context, attempt llm.APIAttempt) {
 			// 利用者の接続が切れても、すでにGeminiへ送った1回は無料枠から減る。
 			// 元リクエストのcontextから切り離し、短い上限だけ付けて確実に数える。
@@ -330,7 +357,7 @@ func main() {
 	serverConfig := server.Config{
 		SessionSecret:    secret,
 		DailyLimit:       envInt("DAILY_LIMIT", 30),
-		APIDailyLimit:    envInt("GEMINI_RPD_LIMIT", 500),
+		APIDailyLimit:    rpdLimit,
 		AllowOrigin:      allowOrigin,
 		SPADir:           os.Getenv("SPA_DIR"),
 		StoreName:        storeName,

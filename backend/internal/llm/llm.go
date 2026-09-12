@@ -27,6 +27,10 @@ type APIAttempt struct {
 
 type APIAttemptObserver func(context.Context, APIAttempt)
 
+// APIAttemptGuard は送信の直前に呼ばれ、送ってよければ nil を返す。
+// **数えるだけでは枠は守れない**ので、止められる場所をここに用意する。
+type APIAttemptGuard func(ctx context.Context, model string) error
+
 // RuntimeStatus は管理画面へ公開してよい上流の状態だけを表す。
 // APIキーや応答本文は含めない。
 type RuntimeStatus struct {
@@ -64,6 +68,9 @@ var (
 	ErrRateLimited = errors.New("LLMの利用上限に到達")
 	// ErrDailyQuota はGemini無料枠のRPD上限到達を表す。
 	ErrDailyQuota = errors.New("LLMの日次利用上限に到達")
+	// ErrQuotaGuard は、こちらが数えた送信回数が上限へ達したことを表す。
+	// 上流が429を返す前に、自分で止めた場合に使う
+	ErrQuotaGuard = errors.New("本日のLLM利用上限に達しました")
 	// ErrUnavailable は一時的な通信障害や上流サービス障害を表す。
 	ErrUnavailable = errors.New("LLMへ一時的に接続できない")
 )

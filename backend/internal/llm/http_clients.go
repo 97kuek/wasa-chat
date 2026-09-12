@@ -36,6 +36,9 @@ type Gemini struct {
 	maxRetries   int
 	statusMu     sync.RWMutex
 	observer     APIAttemptObserver
+	// allow は送信してよいかを問う。nil なら常に送る。
+	// **数えるだけでは枠は守れない。** 送る前に止められる場所がここしかない
+	allow APIAttemptGuard
 }
 
 const geminiBase = "https://generativelanguage.googleapis.com/v1beta"
@@ -103,6 +106,18 @@ func (g *Gemini) release() { <-g.requestSlot }
 
 func (g *Gemini) Name() string { return "gemini/" + g.model }
 
+// SetAttemptGuard は送信の直前に呼ぶ判定を差し込む。起動時に1度だけ設定する。
+//
+// ⚠️ **数えるだけの仕組みでは枠は守れない。** これまで GEMINI_RPD_LIMIT は
+// 管理画面へ残量を出すだけで、上限に達しても止まるのは「429が返ってから」だった。
+// 日次上限の429は待っても回復しない（太平洋時間0時まで）ので、そこまで全部の質問が
+// 失敗し続ける。送る前に止めれば、少なくとも「なぜ使えないか」を説明して返せる。
+func (g *Gemini) SetAttemptGuard(guard APIAttemptGuard) {
+	g.statusMu.Lock()
+	g.allow = guard
+	g.statusMu.Unlock()
+}
+
 // SetAttemptObserver は起動時に1度だけ設定する。秘密値を渡さず、
 // モデル名・方式・送信時刻だけで無料枠の消費を数える。
 func (g *Gemini) SetAttemptObserver(observer APIAttemptObserver) {
@@ -126,6 +141,17 @@ func (g *Gemini) setBlocked(until time.Time, err error) {
 
 func (g *Gemini) clearBlocked() {
 	g.setBlocked(time.Time{}, nil)
+}
+
+// permit は送信してよいかを判定に問う。判定が無ければ常に許す。
+func (g *Gemini) permit(ctx context.Context, model string) error {
+	g.statusMu.RLock()
+	allow := g.allow
+	g.statusMu.RUnlock()
+	if allow == nil {
+		return nil
+	}
+	return allow(ctx, model)
 }
 
 func (g *Gemini) observeAttempt(ctx context.Context, attempt APIAttempt) {
@@ -398,6 +424,9 @@ func (g *Gemini) do(ctx context.Context, model, method string, body map[string]a
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-goog-api-key", g.key)
+		if err := g.permit(ctx, model); err != nil {
+			return nil, err
+		}
 		g.observeAttempt(ctx, APIAttempt{At: time.Now().UTC(), Model: model, Method: method})
 		resp, err := g.http.Do(req)
 		if err != nil {

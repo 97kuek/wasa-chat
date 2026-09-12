@@ -1007,7 +1007,16 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		message := "回答の生成に失敗しました"
 		code := ""
 		retryAt := ""
-		if errors.Is(err, llm.ErrDailyQuota) {
+		if errors.Is(err, llm.ErrQuotaGuard) {
+			// こちらが数えて止めた場合。上流の429と区別する理由は、
+			// **こちらの設定で止めているので設定を直せば戻せる**ため
+			usageEvent.Outcome = "quota_guard"
+			if refundErr := s.refund(r.Context(), userKey, day); refundErr != nil {
+				log.Printf("利用回数の返却に失敗: %v", refundErr)
+			}
+			code = "daily_quota"
+			message = "本日のLLM利用上限に達しました（安全のためこちら側で止めています）"
+		} else if errors.Is(err, llm.ErrDailyQuota) {
 			usageEvent.Outcome = "daily_quota"
 			if refundErr := s.refund(r.Context(), userKey, day); refundErr != nil {
 				log.Printf("利用回数の返却に失敗: %v", refundErr)
