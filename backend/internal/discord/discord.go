@@ -28,6 +28,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -204,6 +205,7 @@ type Source struct {
 // 2000字を超えるときは**本文を削り、出典は残す**。出典を落とすと、
 // 長い回答ほど根拠が分からなくなるという逆の挙動になる。
 func FormatAnswer(question, answer string, sources []Source) string {
+	answer = stripCitations(answer)
 	var tail strings.Builder
 	if len(sources) > 0 {
 		tail.WriteString("\n\n**参照**\n")
@@ -227,6 +229,34 @@ func FormatAnswer(question, answer string, sources []Source) string {
 }
 
 const truncatedMark = "…（長いため省略しました）"
+
+// citationPattern は本文に付く資料番号 [1] や [1][3]。
+// `[見出し](URL)` を巻き込まないよう、直後が `(` のものは対象にしない。
+var citationPattern = regexp.MustCompile(`(\[\d+\])+(?:\()?`)
+
+// stripCitations は本文から資料番号を外す。
+//
+// 画面では [1] が**押せる出典マーク**になるが、Discordには押す先が無く、
+// ただの記号として残る。実際に使って「見にくすぎる」という指摘が出た（2026-09-13）。
+//
+// ⚠️ **プロンプト側で「書くな」とは頼まない。** 根拠を明示させる規則そのものが
+// 回答の正確さを支えている（docs/02）。書かせたうえで、**表示の都合だけを
+// ここで落とす**。出典の一覧は下に残るので、確かめる道は閉じない。
+func stripCitations(answer string) string {
+	cleaned := citationPattern.ReplaceAllStringFunc(answer, func(match string) string {
+		// 直後が `(` ならMarkdownのリンクなので触らない
+		if strings.HasSuffix(match, "(") {
+			return match
+		}
+		return ""
+	})
+	// 番号を抜いた跡に残る行末の空白を落とす
+	lines := strings.Split(cleaned, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	return strings.Join(lines, "\n")
+}
 
 // FormatRecap は要約・ToDoの本文を組み立てる。
 //

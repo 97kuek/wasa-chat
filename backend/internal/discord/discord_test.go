@@ -185,3 +185,40 @@ func TestQuestionIgnoresNonString(t *testing.T) {
 		t.Fatalf("質問を拾えない: %q", got)
 	}
 }
+
+// 画面では [1] が押せる出典マークになるが、Discordには押す先が無く、
+// ただの記号として残る。実際に使って「見にくすぎる」と指摘が出た（2026-09-13）
+func TestFormatAnswerStripsCitations(t *testing.T) {
+	got := FormatAnswer("荷重試験は？",
+		"新宿で申請します。[1] 期限は前日までです。[2][3]\n- 担当は設計班[1]",
+		[]Source{{Title: "荷重試験", URL: "https://wiki.example/load"}})
+
+	if strings.Contains(got, "[1]") || strings.Contains(got, "[2][3]") {
+		t.Fatalf("資料番号が残っている:\n%s", got)
+	}
+	if !strings.Contains(got, "新宿で申請します。 期限は前日までです。") {
+		t.Fatalf("本文が壊れている:\n%s", got)
+	}
+	// **出典の一覧は残す。** 確かめる道まで閉じない
+	if !strings.Contains(got, "[荷重試験](https://wiki.example/load)") {
+		t.Fatalf("出典が消えている:\n%s", got)
+	}
+}
+
+// `[見出し](URL)` を巻き込まないこと。資料本文のリンクは残す
+func TestStripCitationsKeepsMarkdownLinks(t *testing.T) {
+	got := stripCitations("詳細は[1](https://example.com/doc)にあります。[2]")
+	if !strings.Contains(got, "[1](https://example.com/doc)") {
+		t.Fatalf("リンクを壊した: %q", got)
+	}
+	if strings.Contains(got, "。[2]") {
+		t.Fatalf("資料番号が残っている: %q", got)
+	}
+}
+
+// 番号を抜いた跡に行末の空白を残さない
+func TestStripCitationsTrimsTrailingSpace(t *testing.T) {
+	if got := stripCitations("申請します。 [1]\n次の行"); got != "申請します。\n次の行" {
+		t.Fatalf("行末が汚れている: %q", got)
+	}
+}
