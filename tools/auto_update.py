@@ -52,6 +52,10 @@ INDEX = ROOT / "data" / "index.json"
 TOC = ROOT / "data" / "toc.md"
 # 前回の公開元の一覧。**索引と比べてはいけない理由**は remote_snapshot() にある
 MANIFEST = ROOT / "data" / "sources.json"
+DUMP = ROOT / "dump"
+# 取得済みの生データ。**変わっていない出所を取り直さないために持ち回る。**
+# 索引と同じ非公開バケットへ置く（中身は索引に入っているものと同じ）
+DUMP_FILES = ("pages.jsonl", "site.jsonl", "fee.jsonl", "images.json")
 
 # 取得の失敗を公開しないための下限。publish-index.sh と同じ値にすること
 MIN_PAGES = 100
@@ -108,25 +112,42 @@ def source_counts(index: dict) -> Counter:
     return Counter((page.get("source") or "wiki") for page in index["pages"])
 
 
-def changed_since(previous: dict, snapshot: dict) -> bool:
-    """前回の基準と、いまの公開元を比べる。"""
-    changed = check_updates.describe_changes("Wiki", previous.get("wiki", {}), snapshot["wiki"])
-    return check_updates.describe_changes("公式サイト", previous.get("site", {}), snapshot["site"]) or changed
+def changed_since(previous: dict, snapshot: dict) -> set[str]:
+    """前回の基準と比べて、**どの出所が変わったか**を返す。空なら変更なし。"""
+    changed: set[str] = set()
+    if check_updates.describe_changes("Wiki", previous.get("wiki", {}), snapshot["wiki"]):
+        changed.add("wiki")
+    if check_updates.describe_changes("公式サイト", previous.get("site", {}), snapshot["site"]):
+        changed.add("site")
+    return changed
 
 
-def rebuild() -> None:
-    """取得から索引作成までを回す。**途中で失敗したら止める。**
+def rebuild(sources: set[str]) -> None:
+    """変わった出所だけ取り直し、索引を作り直す。**途中で失敗したら止める。**
 
-    古い取得結果と新しい取得結果を混ぜた索引を作らないため、
-    rebuild.py と同じく1つでも失敗したらそこで終わる。
+    ⚠️ **取得は出所ごとに分ける。** 全部取り直すと約11分かかるが、その大半は
+    公式サイトの500ページを1件ずつ取る時間である（実測）。
+
+      Wiki 117ページ        50件ずつまとめて3リクエスト → 数秒
+      公式サイト 500ページ   1ページずつ1秒間隔        → 8〜9分
+      ガイド 32ページ        1ページずつ              → 約30秒
+      索引作成＋目次                                 → 0.3秒
+
+    Wikiを直しただけで公式サイトを取り直すのは、**待ち時間のほぼ全部が無駄**になる。
+    古い取得結果と新しい取得結果を混ぜた索引を作らないため、1つでも失敗したら止める。
     """
-    for label, script in (
-        ("Wikiを取得", "dump_wiki.py"),
-        ("公式サイトを取得", "dump_site.py"),
-        ("フライトシミュレータのガイドを取得", "dump_fee.py"),
-        ("検索索引を作成", "build_index.py"),
-        ("目次を作成", "build_toc.py"),
-    ):
+    steps = [
+        ("wiki", "Wikiを取得", "dump_wiki.py"),
+        ("site", "公式サイトを取得", "dump_site.py"),
+        ("fee", "フライトシミュレータのガイドを取得", "dump_fee.py"),
+    ]
+    for key, label, script in steps:
+        if key not in sources:
+            print(f"--- {label}: 変更なしのため省略 ---", flush=True)
+            continue
+        print(f"--- {label} ---", flush=True)
+        subprocess.run([sys.executable, script], cwd=ROOT, check=True)
+    for label, script in (("検索索引を作成", "build_index.py"), ("目次を作成", "build_toc.py")):
         print(f"--- {label} ---", flush=True)
         subprocess.run([sys.executable, script], cwd=ROOT, check=True)
 
@@ -152,6 +173,25 @@ def safe_to_publish(before: dict | None, after: dict) -> list[str]:
     return problems
 
 
+def pull_dumps(location: str) -> bool:
+    """前回の取得結果を取り寄せる。揃わなければ False（全部取り直す）。"""
+    DUMP.mkdir(exist_ok=True)
+    if not location.startswith("gs://"):
+        return all((DUMP / name).exists() for name in DUMP_FILES)
+
+    from google.cloud import storage
+
+    bucket_name, _, prefix = location.removeprefix("gs://").partition("/")
+    bucket = storage.Client().bucket(bucket_name)
+    prefix = prefix.strip("/")
+    for name in DUMP_FILES:
+        blob = bucket.blob(f"{prefix}/dump/{name}" if prefix else f"dump/{name}")
+        if not blob.exists():
+            return False
+        blob.download_to_filename(DUMP / name)
+    return True
+
+
 def publish(location: str) -> None:
     if not location.startswith("gs://"):
         print(f"差し替え先がGCSではありません（{location}）。手元のファイルは更新済みです。")
@@ -165,6 +205,13 @@ def publish(location: str) -> None:
         name = f"{prefix}/{path.name}" if prefix else path.name
         bucket.blob(name).upload_from_filename(path)
         print(f"差し替え: gs://{bucket_name}/{name}")
+    # 次回、変わっていない出所を取り直さないために残す
+    for dump_name in DUMP_FILES:
+        path = DUMP / dump_name
+        if not path.exists():
+            continue
+        name = f"{prefix}/dump/{dump_name}" if prefix else f"dump/{dump_name}"
+        bucket.blob(name).upload_from_filename(path)
     # 本番は世代番号を見ているので、ここで再デプロイは要らない（docs/07）
     print("本番は次の更新確認（既定60秒以内）で読み直します。")
 
@@ -184,21 +231,27 @@ def main() -> int:
     current = published(location, "index.json")
     previous = published(location, "sources.json")
     snapshot = remote_snapshot()
+    all_sources = {"wiki", "site", "fee"}
     if current is None or previous is None:
-        print("公開中の索引か取得一覧がありません。初回として作り直します。")
-        changed = True
+        print("公開中の索引か取得一覧がありません。初回として全部取り直します。")
+        changed = all_sources
     else:
         print(f"公開中の索引: {len(current['pages'])}ページ（{dict(source_counts(current))}）")
-        changed = args.force or changed_since(previous, snapshot)
+        changed = all_sources if args.force else changed_since(previous, snapshot)
 
     if not changed:
         print("公開元の変更はありません。何もしません。")
         return 0
     if args.check_only:
-        print("公開元に変更があります（--check-only のため取得しません）。")
+        print(f"変更のあった出所: {sorted(changed)}（--check-only のため取得しません）。")
         return 2
 
-    rebuild()
+    # 前回の取得結果が揃わなければ、部分取得はできない
+    if not pull_dumps(location):
+        print("前回の取得結果が揃いません。全部取り直します。")
+        changed = all_sources
+    print(f"取り直す出所: {sorted(changed)}")
+    rebuild(changed)
     # **取得の直前に見た公開元**を次回の基準として残す。取得後に残ったものではない
     MANIFEST.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
     after = json.loads(INDEX.read_text(encoding="utf-8"))
