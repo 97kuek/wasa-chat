@@ -31,6 +31,15 @@ MAX_CHUNKS = 8
 IDENTIFIER_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]*[0-9][A-Za-z0-9_-]*")
 GENERATION_ORDINAL_PATTERN = re.compile(r"([0-9]+)(?:st|nd|rd|th)", re.IGNORECASE)
 GENERATION_LABEL_PATTERN = re.compile(r"[0-9]+代")
+# リンクを尋ねる質問の検出と、そこから落とす語。Go側 linkRequestPattern /
+# linkQuestionNoise と同じ内容にすること。M24で「どこ|ありか」を足している
+LINK_REQUEST_PATTERN = re.compile(
+    r"リンク|URL|https?|github|drive|資料.*場所|どこ|ありか", re.IGNORECASE)
+LINK_QUESTION_NOISE = (
+    "ってありますか", "はありますか", "ありますか", "あれば",
+    "教えてほしいです", "教えてください", "教えて",
+    "そのリンク", "リンク", "URL", "ＵＲＬ", "WASA", "wasa", "Wiki", "wiki",
+)
 DEEP_QUESTION_PATTERN = re.compile(r"比較|違い|差異|変遷|歴代|全体|網羅|すべて|まとめ|傾向|なぜ|理由|背景|複数|どう変")
 RESPONSE_MODES = {"auto", "fast", "standard", "deep"}
 
@@ -208,14 +217,57 @@ class Pipeline:
         return resolved, bool(result.get("answerable", True)), dropped
 
     def deterministic_pages(self, question: str) -> list[str]:
-        """Go側と同じ、モデルの揺らぎに任せない最大2候補を返す。"""
+        """Go側と同じ、モデルの揺らぎに任せない最大2候補を返す。
+
+        ⚠️ **合流順は「実在タイトル → 型番 → リンク」。** 順序を変えてはいけない。
+        M24で、リンク検索を先に広げたら上限2件のせいで正解タイトルが押し出され、
+        19/33 → 18/33 に退行した。以前ここは「型番 → 実在タイトル」で、リンク検索
+        自体が無かった。**測定側だけ順序が違うと、Pythonで測った数字が本番を
+        説明しない**（2026-09-12に修正）。
+        """
         resolved: list[str] = []
-        for title in self.identifier_pages(question) + self.direct_title_pages(question):
+        for title in (self.direct_title_pages(question)
+                      + self.identifier_pages(question)
+                      + self.link_pages(question)):
             if title not in resolved:
                 resolved.append(title)
             if len(resolved) == 2:
                 break
         return resolved
+
+    def link_pages(self, question: str) -> list[str]:
+        """URLを尋ねる質問だけ、リンクを含む本文まで直接照合する。
+
+        Go側 pipeline.linkPages と同じ挙動にすること。目次のリード文は全節を
+        載せられないため、索引に存在していてもページ選択から落ちる例があった。
+        """
+        if not LINK_REQUEST_PATTERN.search(question):
+            return []
+        terms = self.link_question_terms(question)
+        if not terms:
+            return []
+        ranked: list[tuple[int, int, str]] = []
+        for order, (title, page) in enumerate(self.pages.items()):
+            if not page["chunks"]:
+                continue
+            hay = title + "\n" + "\n".join(chunk["text"] for chunk in page["chunks"])
+            score = sum(len(term) for term in terms if term in hay)
+            if score >= 3:
+                ranked.append((-score, order, title))
+        ranked.sort()
+        return [title for _, _, title in ranked[:2]]
+
+    @staticmethod
+    def link_question_terms(question: str) -> list[str]:
+        cleaned = question
+        for noise in LINK_QUESTION_NOISE:
+            cleaned = cleaned.replace(noise, " ")
+        terms: list[str] = []
+        for part in re.split(r"[\s\t\r\n、。！？?!・「」『』（）()はがをにへとのでもやって]+", cleaned):
+            part = part.strip()
+            if len(part) >= 2 and part not in terms:
+                terms.append(part)
+        return terms
 
     @staticmethod
     def normalize_page_mention(value: str) -> str:
@@ -388,9 +440,9 @@ class Pipeline:
   複数の資料が根拠なら [1][3] と並べる
 - 資料番号は各資料の見出しにある番号だけを使う。**書かれていない番号を作らない**
 - 番号を付けるのは事実を述べた文だけでよい。前置きや言い換えには付けない
-- 資料があれば末尾に `- [ページ名](URL)（Wiki / 公式サイト、本文の年代: YYYY年）` 形式で出典を書く
-- URLは資料記載のものだけを使う。資料が無ければ出典を作らない。回答に関係する本文中のURLはそのまま載せる
-- 3件以上の比較や一覧は表にする。数量・年・金額の列は区切り行を ` |---:| ` にして右寄せる
+- 出典の一覧とリンクは画面が索引から表示するため、回答内に出典一覧を作らない
+- 回答に必要なリンクは資料本文にあるURLだけをそのまま載せる。URLを推測して作らない
+- 3件以上の比較や一覧は表にする。数量・年・金額の列は、表の区切り行を |---:| の形にして右寄せる
 - 工程の分岐や前後関係が文章だけでは追いにくいときは、コードブロックの言語名に
   mermaid を指定して flowchart を書く。ラベルには資料の語をそのまま使い、
   図の中で資料にない事実を作らない

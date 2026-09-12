@@ -29,6 +29,18 @@
 
 ## 優先度A: 精度を確定する
 
+**測定を始める前に、必ずこの順で通すこと（いずれも送信0回）**
+
+```bash
+python eval/golden_check.py            # ゴールデンと索引の整合
+python -m unittest eval.test_answer_eval
+```
+
+評価器はM51・M52で作り直した。検索段は節単位で採点でき（Hit / Recall /
+All-Evidence / Context Precision）、`--oracle` で生成だけを切り出せる。
+判定器の校正は `python eval/judge_calibration.py`（人手ラベルが要る）。
+
+
 - API接続は復旧済み（M23）
   - 原因はプリペイド残高ではなく、プロジェクトの請求階層が「無料トライアル」だったこと
   - 課金を紐づけない`wasa-chat`プロジェクトを作り、無料枠のキーへ差し替えた

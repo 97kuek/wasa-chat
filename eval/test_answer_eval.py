@@ -26,9 +26,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from eval.golden_check import check as check_golden  # noqa: E402
 from eval.judge_calibration import cohens_kappa, confusion  # noqa: E402
 from eval.answer_eval import (  # noqa: E402
     CITATION,
+    citation_scores,
     retrieval_scores,
     answered_well,
     body_only,
@@ -206,3 +208,92 @@ class JudgeCalibrationTest(unittest.TestCase):
         self.assertEqual(counts["false_reject"], 1)
         self.assertEqual(counts["true_accept"], 1)
         self.assertEqual(counts["true_reject"], 1)
+
+
+class CitationScoresTest(unittest.TestCase):
+    """出典の測り方を本番へ合わせる。
+
+    **本番は回答内に出典一覧を作らせない。** 題名とURLはサーバーが索引から
+    組み立ててカードで出すので、モデルが書けるのは番号だけである。以前ここは
+    「末尾のMarkdown出典行があるか」を見ており、本番が禁じている振る舞いを
+    合格にしていた。
+    """
+
+    def test_実在する番号だけを数える(self):
+        scores = citation_scores("翼型はDAE31です[1]。桁は[2][3]です。", 2)
+        self.assertEqual(scores["in_range"], 2)
+        self.assertEqual(scores["out_of_range"], 1)
+
+    def test_出典一覧は規則違反として数える(self):
+        scores = citation_scores("- [ページ](https://example.com)（Wiki）", 2)
+        self.assertEqual(scores["source_list"], 1)
+        self.assertEqual(scores["in_range"], 0)
+
+    def test_一般知識の節にある番号は数えない(self):
+        # 一般知識は資料に紐づかない。ここの番号まで数えると、
+        # 資料に基づく引用の割合が実態より高く出る
+        text = "翼型はDAE31です[1]。\n\n## 一般知識（WASA資料外）\n\n誘導抗力は[2]で説明される。"
+        self.assertEqual(citation_scores(text, 2)["in_range"], 1)
+
+    def test_番号が無ければ0(self):
+        self.assertEqual(citation_scores("資料に記載がありません。", 3)["in_range"], 0)
+
+
+class GoldenCheckTest(unittest.TestCase):
+    """ゴールデンデータと索引の整合。
+
+    **チャンクIDは `p{ページ}-c{連番}` で、索引を作り直すとずれ得る。**
+    ずれたまま測ると、検索が当たっているのに外れと数える。
+    """
+
+    INDEX = {"pages": [
+        {"title": "空力設計", "aliases": ["空力"], "chunks": [{"id": "p1-c1"}, {"id": "p1-c2"}]},
+        {"title": "翼班", "aliases": [], "chunks": [{"id": "p2-c1"}]},
+    ]}
+
+    def check(self, question):
+        return check_golden([question], self.INDEX)
+
+    def test_整合していれば何も出ない(self):
+        self.assertEqual(self.check({
+            "id": "q1", "type": "factual", "answerable": True,
+            "evidence_pages": ["空力設計"], "evidence_chunks": ["p1-c1"],
+        }), [])
+
+    def test_索引に無いチャンクを指摘する(self):
+        problems = self.check({
+            "id": "q1", "type": "factual", "answerable": True,
+            "evidence_pages": ["空力設計"], "evidence_chunks": ["p9-c9"],
+        })
+        self.assertEqual(len(problems), 1)
+        self.assertIn("p9-c9", problems[0])
+
+    def test_チャンクと正解ページの食い違いを指摘する(self):
+        # IDがずれたとき、ここが真っ先に食い違う
+        problems = self.check({
+            "id": "q1", "type": "factual", "answerable": True,
+            "evidence_pages": ["空力設計"], "evidence_chunks": ["p2-c1"],
+        })
+        self.assertEqual(len(problems), 1)
+        self.assertIn("翼班", problems[0])
+
+    def test_別名で書かれていたら別名だと教える(self):
+        problems = self.check({
+            "id": "q1", "type": "factual", "answerable": True,
+            "evidence_pages": ["空力"], "evidence_chunks": ["p1-c1"],
+        })
+        self.assertIn("別名として存在", problems[0])
+
+    def test_全域型は正解チャンクが空でよい(self):
+        # 「最も情報が薄い分野は」の根拠は目次そのもので、特定の節ではない
+        self.assertEqual(self.check({
+            "id": "q31", "type": "global", "answerable": True,
+            "evidence_pages": [], "evidence_chunks": [],
+        }), [])
+
+    def test_全域型以外で正解チャンクが空なら指摘する(self):
+        problems = self.check({
+            "id": "q1", "type": "factual", "answerable": True,
+            "evidence_pages": [], "evidence_chunks": [],
+        })
+        self.assertEqual(len(problems), 1)

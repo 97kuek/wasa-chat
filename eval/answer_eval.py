@@ -106,6 +106,27 @@ def answered_well(qtype: str, text: str) -> bool:
         return says_missing or "ではなく" in body        # 前提の誤りを指摘する
     return not (says_missing and len(body) < 160)        # 実質的に答えている
 
+def citation_scores(text: str, source_count: int) -> dict:
+    """本文中の資料番号（`[n]`）を数える。
+
+    ⚠️ **本番は回答内に出典一覧を作らせない。** 出典の題名とURLはサーバーが索引から
+    組み立ててカードで出すので、モデルが書けるのは番号だけである（docs/02）。
+    以前ここは「末尾のMarkdown出典行があるか」を見ていたが、それは測定用Python
+    だけが要求していた形式で、**本番が禁じている振る舞いを合格にしていた**
+    （2026-09-12に修正。TODO.mdが指摘していたずれ）。
+
+    - in_range     : 実在する資料番号の数
+    - out_of_range : 存在しない番号の数（**0であるべき**。M39で222個中0個）
+    - source_list  : 出典一覧を作ってしまった回数（本番では規則違反）
+    """
+    numbers = [int(n) for n in re.findall(r"\[(\d{1,2})\]", strip_general_knowledge(text))]
+    return {
+        "in_range": sum(1 for n in numbers if 1 <= n <= source_count),
+        "out_of_range": sum(1 for n in numbers if not (1 <= n <= source_count)),
+        "source_list": len(CITATION_LINE.findall(text)),
+    }
+
+
 def retrieval_scores(gold_chunks: list[str], picked_chunks: list[str]) -> dict | None:
     """検索段を**節単位**で採点する。gold が無い設問は None（採点対象外）。
 
@@ -217,6 +238,7 @@ def measure(pipeline, llm, questions: list[dict], oracle: bool = False) -> tuple
     stats = {
         "page_hit": 0, "page_scored": 0,
         "cited": 0, "answered_well": 0, "faithful": 0,
+        "marks_in_range": 0, "out_of_range": 0, "source_list": 0,
         # 節単位。分母は gold のある設問だけなので別に数える
         "chunk_scored": 0, "evidence_hit": 0, "all_evidence": 0,
         "gold_total": 0, "found_total": 0, "picked_total": 0,
@@ -238,13 +260,17 @@ def measure(pipeline, llm, questions: list[dict], oracle: bool = False) -> tuple
         if page_hit is not None:
             stats["page_scored"] += 1
             stats["page_hit"] += page_hit
-        cited = bool(CITATION.search(answer.text))
+        marks = citation_scores(answer.text, len(answer.pages))
+        cited = marks["in_range"] > 0
         # **キー名と中身を一致させる。** 以前は `said_no_info` という名前に
         # 「適切に答えられたか」を入れ、保存JSONには逆の意味の値を入れていた。
         # 同じキーが集計と保存で逆を指す状態だった（2026-09-12に発見。測定器の欠陥6件目）
         well = answered_well(q["type"], answer.text)
         stats["cited"] += cited
         stats["answered_well"] += well
+        stats["marks_in_range"] += marks["in_range"]
+        stats["out_of_range"] += marks["out_of_range"]
+        stats["source_list"] += marks["source_list"]
         stats["dropped"] += [(q["id"], t) for t in answer.dropped_titles]
 
         # --- 検索段を節単位で採点する（oracleでは意味がないので飛ばす） ---
@@ -275,6 +301,7 @@ def measure(pipeline, llm, questions: list[dict], oracle: bool = False) -> tuple
             "pages": answer.pages, "gold_pages": q["evidence_pages"],
             "chunk_ids": answer.chunk_ids, "gold_chunks": q["evidence_chunks"],
             "page_hit": page_hit, "cited": cited, "answered_well": well,
+            "citations": marks,
             "retrieval": scores,
             "answerable_gold": q["answerable"], "faithful": verdict["faithful"],
             "faithful_reason": verdict["reason"],
@@ -345,7 +372,12 @@ def main() -> None:
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
     print("【ルールベース（決定的）】")
     print(summarize("ページ選択が的中  ", "page_hit", ps))
-    print(summarize("出典を明示        ", "cited", n))
+    print(summarize("本文に資料番号     ", "cited", n))
+    marks = sum(stats["marks_in_range"] for _, stats, _ in runs)
+    outside = sum(stats["out_of_range"] for _, stats, _ in runs)
+    listed = sum(stats["source_list"] for _, stats, _ in runs)
+    print(f"  資料番号: 実在 {marks}個 / **範囲外 {outside}個**（0であるべき）")
+    print(f"  出典一覧を作ってしまった回答: {listed}件（本番では規則違反。0であるべき）")
     print(summarize("回答の出し方が適切", "answered_well", n))
     if not args.oracle:
         cs = runs[0][1]["chunk_scored"]
