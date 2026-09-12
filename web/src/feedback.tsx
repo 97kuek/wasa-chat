@@ -69,7 +69,11 @@ export function FeedbackPopover(props: FeedbackPopoverProps) {
     <section className="header-popover feedback-popover" id="feedback-popover" aria-label="フィードバック">
       <div className="feedback-popover-head">
         <div><h2>気づいたことを送る</h2><p>改善のため、開発者が確認します</p></div>
-        <button type="button" className="popover-close" onClick={props.onClose} aria-label="閉じる">×</button>
+        <button type="button" className="popover-close" onClick={props.onClose} aria-label="閉じる" title="閉じる">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
       </div>
       <form className="feedback-comment-form" onSubmit={(event) => { event.preventDefault(); props.onSubmit(); }}>
         <FeedbackReasonButtons
@@ -78,10 +82,14 @@ export function FeedbackPopover(props: FeedbackPopoverProps) {
           onToggle={props.onReason}
           className="feedback-choice-list"
         />
-        <label>
-          <span>補足</span>
-          <textarea value={props.comment} onChange={(event) => props.onComment(event.target.value)} maxLength={FEEDBACK_COMMENT_MAX} rows={3} placeholder="どこで、何が起きたかなど" />
-        </label>
+        <textarea
+          value={props.comment}
+          onChange={(event) => props.onComment(event.target.value)}
+          maxLength={FEEDBACK_COMMENT_MAX}
+          rows={3}
+          aria-label="補足"
+          placeholder="どこで、何が起きたかなど"
+        />
         <button type="submit" disabled={!props.reason || props.submitting}>{props.submitting ? "送信中…" : "送信する"}</button>
       </form>
     </section>
@@ -133,8 +141,8 @@ export function AnswerFeedback(props: AnswerFeedbackProps) {
         <button
           type="button"
           className="answer-action"
-          aria-label="回答を作り直す"
-          title="回答を作り直す（質問1回分を使います）"
+          aria-label="同じ質問を入力欄へ入れる"
+          title="同じ質問を入力欄へ入れる"
           disabled={props.regenerating}
           onClick={props.onRegenerate}
         >
@@ -145,11 +153,17 @@ export function AnswerFeedback(props: AnswerFeedbackProps) {
       </div>
       {props.open && turn.feedbackRating && (
         <div className="answer-feedback-detail">
+          <button type="button" className="answer-feedback-close" onClick={props.onClose} aria-label="閉じる" title="閉じる">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="m6 6 12 12M18 6 6 18" />
+            </svg>
+          </button>
           <FeedbackReasonButtons reasons={turn.feedbackRating === "good" ? GOOD_REASONS : BAD_REASONS} selected={turn.feedbackReasons ?? []} onToggle={props.onReason} className="feedback-chips" />
+          {/* 「補足」というラベルは置かない。書く欄が1つしかなく、
+              プレースホルダで足りる。閉じるはアイコンで右上へ寄せる */}
           <div className="answer-feedback-comment">
-            <textarea value={props.comment} onChange={(event) => props.onComment(event.target.value)} maxLength={FEEDBACK_COMMENT_MAX} rows={2} placeholder="補足があれば入力（任意）" />
-            <button type="button" onClick={props.onSubmitComment}>補足を送る</button>
-            <button type="button" className="linkish" onClick={props.onClose}>閉じる</button>
+            <textarea value={props.comment} onChange={(event) => props.onComment(event.target.value)} maxLength={FEEDBACK_COMMENT_MAX} rows={2} aria-label="補足" placeholder="補足があれば入力（任意）" />
+            <button type="button" onClick={props.onSubmitComment}>送る</button>
           </div>
           <p>評価時は、この質問・回答・出典も改善確認のため保存します。</p>
         </div>

@@ -22,7 +22,7 @@ test("アシスタントは閲覧で開き、編集は明示的に入る", () =>
 // 設定する項目は多くない。タブで分けると全部見るのに4回切り替えることになるので、
 // 1画面に並べて画面の広さに応じて段を増やす。
 test("アシスタント設定は1画面に並べ、横幅を制限しない", () => {
-  for (const heading of ["基本設定", "参照範囲", "指示（口調・書き方）", "用語集"]) {
+  for (const heading of ["基本設定", "参照範囲", "プロンプト指示", "用語集"]) {
     assert.match(form, new RegExp(`<h3>${heading.replace(/[()（）]/g, (c) => "\\" + c)}</h3>`));
   }
   assert.match(form, /className="assistant-sections"/);
@@ -54,13 +54,14 @@ test("指示は4つの欄に分け、保存する形は1本の文字列のまま
     assert.match(form, new RegExp(`heading: "${heading}"`));
   }
   // 型に沿っていない既存の指示は分解しない（文章が並べ替わると意図が変わる）
-  assert.match(form, /指示（自由記述）/);
+  assert.match(form, /<span>プロンプト<\/span>/);
 });
 
 // 用語集は語の言い換えを置く場所であって、事実を置く場所ではない。
-test("用語集は事実を置く場所ではないと画面にも書く", () => {
-  assert.match(form, /事実を書く場所ではありません/);
-  assert.match(form, /出典が付かない/);
+// 画面の説明は最小限にし、**事実を置かせない規則そのものはサーバー側に残す**。
+// 守っているのは system の規則（assistant.Guard）とプロンプトであって、画面の文言ではない。
+test("用語集の説明は読み替えの表であることだけを書く", () => {
+  assert.match(form, /読み替えるための表です。/);
   assert.match(form, /APP_LIMITS\.glossaryEntries/);
 });
 

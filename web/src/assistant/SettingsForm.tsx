@@ -136,8 +136,8 @@ export function AssistantSettingsForm({
             </header>
 
             <p className="assistant-form-note">
-              書けるのは<strong>口調・書き方・参照範囲・用語集</strong>だけです。
-              出典の一覧と参照範囲はサーバー側で決まるため、指示では変えられません。
+              アシスタントを選ぶと、<strong>どの資料を参照するか</strong>と
+              <strong>どんな口調・書き方で答えるか</strong>が変わります。
             </p>
 
             {/* 設定する項目は多くない。タブで分けると、全部見るのに
@@ -170,7 +170,7 @@ export function AssistantSettingsForm({
                     onChange={(event) => setDraft((d) => ({ ...d, name: event.target.value }))} />
                 </label>
                 <label>
-                  <span>説明（一覧に出ます）</span>
+                  <span>説明</span>
                   <input value={draft.description} maxLength={APP_LIMITS.assistantDescriptionRunes} readOnly={readOnly}
                     onChange={(event) => setDraft((d) => ({ ...d, description: event.target.value }))} />
                 </label>
@@ -229,15 +229,11 @@ export function AssistantSettingsForm({
                     </div>
                   </div>
                 )}
-                <p className="assistant-hint">
-                  指定できるのは<strong>狭める方向だけ</strong>です。範囲外の資料はサーバー側で外れるため、
-                  指示に何を書いても混ざりません。
-                </p>
               </div>
             </section>
 
             <section className="assistant-section">
-              <h3>指示（口調・書き方）</h3>
+              <h3>プロンプト指示</h3>
               <div className="assistant-panel">
                 {instructionParts ? (
                   INSTRUCTION_PARTS.map((part) => (
@@ -257,7 +253,7 @@ export function AssistantSettingsForm({
                     {/* 型に沿っていない既存の指示は、勝手に分解しない。
                         文章が並べ替わると、作った人の意図が変わる */}
                     <label>
-                      <span>指示（自由記述）</span>
+                      <span>プロンプト</span>
                       <textarea value={draft.instruction} rows={10} maxLength={APP_LIMITS.assistantInstructionRunes}
                         required readOnly={readOnly}
                         onChange={(event) => setDraft((d) => ({ ...d, instruction: event.target.value }))} />
@@ -273,8 +269,7 @@ export function AssistantSettingsForm({
                   </>
                 )}
                 <p className="assistant-hint">
-                  {draft.instruction.length} / {APP_LIMITS.assistantInstructionRunes}文字。
-                  指示が長いほど、資料に使える文脈が減ります。
+                  {draft.instruction.length} / {APP_LIMITS.assistantInstructionRunes}文字
                 </p>
               </div>
             </section>
@@ -282,11 +277,11 @@ export function AssistantSettingsForm({
             <section className="assistant-section">
               <h3>用語集</h3>
               <div className="assistant-panel">
+                {/* ⚠️ **画面の説明は最小限だが、規則そのものは消していない。**
+                    「用語集を事実の根拠にしない」は system 側（assistant.Guard）と
+                    プロンプトに入っている。守っているのはそちらであって、この文言ではない */}
                 <p className="assistant-hint">
-                  部内でしか通じない言い方を、資料での言い方へ読み替えるための表です
-                  （「ペラ」→「プロペラ」など）。
-                  <strong>事実を書く場所ではありません。</strong>
-                  ここに書いたものには出典が付かないため、事実としては扱われません。
+                  部内でしか通じない言い方を、資料での言い方へ読み替えるための表です。
                 </p>
                 <ul className="glossary-list">
                   {(draft.glossary ?? []).map((entry, index) => (

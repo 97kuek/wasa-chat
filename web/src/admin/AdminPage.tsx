@@ -43,7 +43,7 @@ const PERIOD_OPTIONS: SelectOption[] = [
 ];
 const tabs: { id: AdminTab; label: string; description: string }[] = [
   { id: "overview", label: "概要", description: "今日の利用状況とシステムの状態を確認します。" },
-  { id: "sources", label: "資料更新", description: "Wiki・公式サイトの変更と、取り込み直しの手順を確認します。" },
+  { id: "sources", label: "資料更新", description: "公開元の変更を確認し、変わっていれば手元で取り込み直します。" },
   { id: "users", label: "利用者・権限", description: "利用回数の確認と、共同管理者の追加・解除を行います。" },
   { id: "quota", label: "API利用状況", description: "Gemini無料枠の利用量とリセット時刻を確認します。" },
   { id: "logs", label: "監査ログ", description: "質問本文を含まない利用記録と管理者操作を確認します。" },
@@ -129,7 +129,7 @@ function progressLabel(stage: AdminOverview["updateProgress"]["stage"]): string 
   switch (stage) {
     case "unavailable": return "更新確認を利用できません";
     case "not_checked": return "更新確認待ち";
-    case "changes_detected": return "再構築・差分確認待ち";
+    case "changes_detected": return "再構築待ち";
     case "verify_needed": return "反映後の再確認待ち";
     default: return "最新です";
   }
@@ -139,7 +139,7 @@ function nextUpdateAction(stage: AdminOverview["updateProgress"]["stage"]): stri
   switch (stage) {
     case "unavailable": return "更新確認用のWikiアカウント設定が必要です。";
     case "not_checked": return "「更新を確認」を押してください。";
-    case "changes_detected": return "索引を再構築し、差分確認後に本番へ反映してください。";
+    case "changes_detected": return "手元で再構築し、差分を確認してから差し替えてください。";
     case "verify_needed": return "もう一度更新を確認し、変更なしになることを確かめてください。";
     default: return "現在必要な作業はありません。";
   }
@@ -291,7 +291,7 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
   async function copyPublishSteps() {
     try {
       await navigator.clipboard.writeText("python rebuild.py\nsh tools/publish-index.sh");
-      showToast("再構築と本番反映のコマンドをコピーしました");
+      showToast("再構築と差し替えのコマンドをコピーしました");
     } catch {
       showToast("コピーできませんでした。コマンドを選択してコピーしてください");
     }
@@ -404,7 +404,7 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
             <>
               <section aria-labelledby="admin-source-title">
                 <div className="admin-section-head">
-                  <div><h3 id="admin-source-title">資料の状態</h3><p>Wiki・公式サイトと現在の索引を比較します。</p></div>
+                  <div><h3 id="admin-source-title">資料の状態</h3><p>公開元と現在の索引を比較します。</p></div>
                   <button type="button" className="admin-primary" onClick={() => void runSourceCheck()} disabled={checkingSources || !data.sourceCheck.available}>
                     {checkingSources ? "確認中…" : "更新を確認"}
                   </button>
@@ -415,7 +415,9 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
                     <span>{lastCheck ? `${formatDateTime(lastCheck.checkedAt)}・${lastCheck.checkedBy}` : "未確認"}</span>
                   </div>
                   <div className="admin-update-flow" aria-label="資料更新の流れ">
-                    {['公開元を確認', '再構築・差分確認', '本番へ反映', '反映後を再確認'].map((label, index) => <span key={label}><i>{index + 1}</i>{label}</span>)}
+                    {/* 「反映後を再確認」は無くした。索引を差し替えると本番が自分で読み直すので、
+                        反映を確かめに戻る必要がなくなった（2026-09-12） */}
+                    {['公開元を確認', '手元で再構築', '差し替え'].map((label, index) => <span key={label}><i>{index + 1}</i>{label}</span>)}
                   </div>
                   {lastCheck?.changed && (
                     <details className="admin-source-details">
@@ -437,21 +439,14 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
                       </div>
                     </details>
                   )}
-                </div>
-              </section>
-
-              <section aria-labelledby="admin-publish-title">
-                <div className="admin-section-head">
-                  <div><h3 id="admin-publish-title">反映手順</h3><p>変更が見つかった場合だけ行います。</p></div>
-                </div>
-                <div className="admin-publish-guide">
-                  <p>再構築と本番反映は、安全確認のため管理画面ではなく保守者の手元で行います。</p>
-                  <details>
-                    <summary>手元での操作を見る</summary>
+                  {/* 取得と再構築は手元で行う。**ここは自動化していない。**
+                      自動になったのは「差し替えたあとの反映」だけ */}
+                  <details className="admin-publish-guide">
+                    <summary>変更があったときの手順</summary>
                     <ol>
                       <li><span>1</span><div><strong>再構築</strong><code>python rebuild.py</code></div></li>
                       <li><span>2</span><div><strong>差分を確認</strong><small>意図しない削除や誤編集がないことを確認します。</small></div></li>
-                      <li><span>3</span><div><strong>本番反映</strong><code>sh tools/publish-index.sh</code></div></li>
+                      <li><span>3</span><div><strong>差し替え</strong><code>sh tools/publish-index.sh</code><small>本番は1分以内に自分で読み直します。再デプロイは要りません。</small></div></li>
                     </ol>
                     <button type="button" className="admin-secondary" onClick={() => void copyPublishSteps()}>コマンドをコピー</button>
                   </details>

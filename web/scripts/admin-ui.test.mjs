@@ -22,10 +22,11 @@ test("管理通知は通常チャットと共通の黒色トーストを使う",
   assert.match(styles, /\.toast\s*\{[\s\S]*background: var\(--text\)/);
 });
 
-test("資料更新に再構築と本番反映の手順を表示する", () => {
+// 取得と再構築は自動化していない。**自動になったのは差し替えたあとの反映だけ。**
+test("資料更新に再構築と差し替えの手順を表示する", () => {
   assert.match(page, /python rebuild\.py/);
   assert.match(page, /sh tools\/publish-index\.sh/);
-  assert.match(page, /管理画面ではなく保守者の手元で行います/);
+  assert.match(page, /再デプロイは要りません/);
 });
 
 test("更新中はSVGを回さず固定寸法のスピナーへ切り替える", () => {
@@ -50,8 +51,10 @@ test("要対応を置かず画面・API・索引のバージョンを表示す�
   assert.match(page, /data\.system\.indexVersion/);
 });
 
-test("資料更新の4段階と共通選択メニューによる監査ログ絞り込みを表示する", () => {
-  for (const label of ["公開元を確認", "再構築・差分確認", "本番へ反映", "反映後を再確認"]) {
+// 「反映後を再確認」は無くした。索引を差し替えると本番が自分で読み直すので、
+// 反映を確かめに戻る必要がない（2026-09-12）。
+test("資料更新の3段階と共通選択メニューによる監査ログ絞り込みを表示する", () => {
+  for (const label of ["公開元を確認", "手元で再構築", "差し替え"]) {
     assert.match(page, new RegExp(label));
   }
   assert.match(page, /aria-label="利用ログの絞り込み"/);

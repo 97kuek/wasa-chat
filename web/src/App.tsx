@@ -681,22 +681,25 @@ export default function App() {
   }
 
   /**
-   * 同じ質問で回答を作り直す。
+   * 同じ質問を入力欄へ戻す。
    *
-   * **質問1回分を消費する。** 画像は履歴に保存していない（Firestoreの
-   * 1ドキュメント1MB上限に対し履歴は30件）ので、画像つきの質問は
-   * 画像なしで聞き直すことになる。黙って変わると理由が分からないので確認する。
+   * 以前はその場で回答を作り直していたが、**前の回答が消えてしまう**ので、
+   * 作り直した結果が悪かったときに戻せなかった（2026-09-12の報告）。
+   * 入力欄へ入れるだけにすれば、直してから送るのも、やめるのも選べる。
+   * 質問の消費も、実際に送るまで起きない。
    */
-  function handleRegenerate(chat: Chat, turnIndex: number, turn: Turn) {
-    if (streaming) return;
+  function handleRegenerate(_chat: Chat, _turnIndex: number, turn: Turn) {
     if (!turn.question.trim()) {
-      showToast("画像だけの質問は作り直せません");
+      showToast("画像だけの質問は入力欄へ戻せません");
       return;
     }
-    if (turn.hasAttachment &&
-      !window.confirm("画像は保存していないため、画像なしで聞き直します。よろしいですか？")) return;
-    setActiveChatId(chat.id);
-    void handleAsk(turn.question, turnIndex);
+    setQuestion(turn.question);
+    const input = questionInput.current;
+    if (input) {
+      input.focus();
+      resizeComposerTextarea(input);
+    }
+    showToast("同じ質問を入力欄へ入れました");
   }
 
   function handleNewChat() {
