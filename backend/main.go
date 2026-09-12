@@ -366,6 +366,8 @@ func main() {
 		CodeVersion:      env("APP_VERSION", "local"),
 		IndexPublishedAt: os.Getenv("INDEX_PUBLISHED_AT"),
 		LLMName:          client.Name(),
+		DiscordPublicKey: os.Getenv("DISCORD_PUBLIC_KEY"),
+		DiscordAppID:     os.Getenv("DISCORD_APP_ID"),
 		AdminUsers:       admins,
 	}
 	updateChecker := sourcecheck.New(

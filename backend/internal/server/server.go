@@ -45,6 +45,9 @@ type Config struct {
 	// SourceCheck は現在の索引とWiki・公式サイトを読み取り専用で照合する。
 	SourceCheck          func(context.Context) ([]state.SourceDelta, error)
 	SourceCheckAvailable bool
+	// Discordのスラッシュコマンド。公開鍵が未設定なら口ごと開かない
+	DiscordPublicKey string
+	DiscordAppID     string
 	// AdminUsersは画面から外せない主管理者。共同管理者はFirestoreへ保存する。
 	// 設定を復旧口に残し、画面操作だけで管理者がゼロになる事故を防ぐ。
 	AdminUsers []string
@@ -97,6 +100,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/assistants/{id}", s.requireAuth(s.handleDeleteAssistant))
 	// Cloud Runでは末尾が z の一部パスがプラットフォーム側で処理され、
 	// アプリまで届かず404になるため、予約されない /health を使う。
+	// Discordは署名で本人確認するので、Cookieの認証は通さない
+	mux.HandleFunc("POST /api/discord", s.handleDiscord)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		pages, chunks := s.live.Current().Stats()
 		status := s.live.Status()
