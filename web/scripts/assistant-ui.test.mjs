@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const page = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const avatar = readFileSync(new URL("../src/avatar.tsx", import.meta.url), "utf8");
 
 // **作成者でもまず閲覧から始める。** 設定を見に来ただけのときに編集欄が開いていると、
@@ -16,12 +17,24 @@ test("アシスタントは閲覧で開き、編集は明示的に入る", () =>
   assert.match(page, /複製して作る/);
 });
 
-// 設定は項目ごとにタブで分ける。1枚の長いフォームだと、何を書く場所なのか分からない。
-test("アシスタント設定は基本設定・参照範囲・指示・用語集に分かれる", () => {
-  for (const label of ["基本設定", "参照範囲", "指示", "用語集"]) {
-    assert.match(page, new RegExp(`label: "${label}"`));
+// 設定する項目は多くない。タブで分けると全部見るのに4回切り替えることになるので、
+// 1画面に並べて画面の広さに応じて段を増やす。
+test("アシスタント設定は1画面に並べ、横幅を制限しない", () => {
+  for (const heading of ["基本設定", "参照範囲", "指示（口調・書き方）", "用語集"]) {
+    assert.match(page, new RegExp(`<h3>${heading.replace(/[()（）]/g, (c) => "\\" + c)}</h3>`));
   }
-  assert.match(page, /className=\{`assistant-tab\$\{assistantTab === tab\.key \? " is-active" : ""\}`\}/);
+  assert.match(page, /className="assistant-sections"/);
+  assert.doesNotMatch(page, /assistantTab|assistant-tab/);
+  assert.match(styles, /\.assistant-sections\s*\{[^}]*grid-template-columns: repeat\(auto-fit, minmax\(340px, 1fr\)\)/s);
+  assert.doesNotMatch(styles, /\.assistant-page \.assistant-form\s*\{[^}]*max-width/s);
+});
+
+// 黒背景・白背景・青文字の3種類が混ざっていた。主操作は黒、それ以外は白の2つに揃える。
+test("設定画面のボタンは1組の見た目に揃える", () => {
+  assert.doesNotMatch(page, /assistant-edit-enter/);
+  assert.doesNotMatch(styles, /assistant-edit-enter/);
+  assert.match(styles, /\.assistant-form-head button,\n\.assistant-actions button \{/);
+  assert.match(styles, /\.assistant-form-head button\.primary,\n\.assistant-actions button\.primary \{/);
 });
 
 // 指示は1本の文字列が正本で、4つの欄はその見え方にすぎない。

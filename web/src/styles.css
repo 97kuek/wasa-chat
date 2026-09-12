@@ -2278,7 +2278,9 @@ button:disabled {
 }
 
 .assistant-page .assistant-form {
-  max-width: 640px;
+  /* **横幅を制限しない。** 以前は640pxで止めていたので、広い画面では
+     設定が左端へ寄って、右半分が空いたままだった（2026-09-12の報告） */
+  gap: 16px;
 }
 
 .assistant-page .assistant-form header h2 {
@@ -2655,6 +2657,7 @@ button:disabled {
   gap: 8px;
 }
 
+.assistant-form-head button,
 .assistant-actions button {
   padding: 9px 14px;
   border: 1px solid var(--line);
@@ -2664,12 +2667,14 @@ button:disabled {
   cursor: pointer;
 }
 
+.assistant-form-head button.primary,
 .assistant-actions button.primary {
   border-color: var(--text);
   background: var(--text);
   color: var(--surface);
 }
 
+.assistant-form-head button:disabled,
 .assistant-actions button:disabled { opacity: 0.45; }
 
 @media (max-width: 700px) {
@@ -3354,17 +3359,6 @@ button:disabled {
 .assistant-form-title h2 { margin: 0; }
 .assistant-form-title p { margin: 2px 0 0; font-size: 13px; }
 
-.assistant-edit-enter {
-  flex: none;
-  min-height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--accent);
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--accent);
-  font-weight: 600;
-  cursor: pointer;
-}
 
 .assistant-form-note {
   margin: 0;
@@ -3373,32 +3367,31 @@ button:disabled {
   line-height: 1.7;
 }
 
-/* タブは「いま何を設定しているか」を示すだけなので、選択中だけを強く出す */
-.assistant-tabs {
-  display: flex;
-  gap: 2px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--line);
+
+
+
+
+/* 設定は1画面に並べ、画面の広さに応じて段を増やす。
+   `align-items: start` が無いと、短い節が隣の高い節に合わせて間延びする */
+.assistant-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  align-items: start;
+  gap: 16px;
 }
 
-.assistant-tab {
-  flex: none;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--muted);
+.assistant-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.assistant-section h3 {
+  margin: 0;
   font-size: 14px;
-  cursor: pointer;
-}
-
-.assistant-tab:hover { color: var(--text); }
-
-.assistant-tab.is-active {
-  border-bottom-color: var(--accent);
-  color: var(--accent);
-  font-weight: 600;
 }
 
 .assistant-panel {

@@ -183,14 +183,6 @@ function joinInstruction(parts: InstructionParts): string {
     .join("\n\n");
 }
 
-type AssistantTab = "basic" | "scope" | "instruction" | "glossary";
-
-const ASSISTANT_TABS: { key: AssistantTab; label: string }[] = [
-  { key: "basic", label: "基本設定" },
-  { key: "scope", label: "参照範囲" },
-  { key: "instruction", label: "指示" },
-  { key: "glossary", label: "用語集" },
-];
 
 /**
  * 回答末尾の「出典: ページ名（最終更新: YYYY-MM）」を落とす。
@@ -288,7 +280,6 @@ export default function App() {
   const [assistantError, setAssistantError] = useState("");
   // 出所と区分の組み合わせごとの参照できるページ数。サーバーが索引を数えて返す
   const [scopeCounts, setScopeCounts] = useState<ScopeCounts>({});
-  const [assistantTab, setAssistantTab] = useState<AssistantTab>("basic");
   const bottom = useRef<HTMLDivElement>(null);
   const conversation = useRef<HTMLElement>(null);
   const questionInput = useRef<HTMLTextAreaElement>(null);
@@ -926,7 +917,6 @@ export default function App() {
   function startCreate() {
     setAssistantDraft(emptyDraft);
     setAssistantError("");
-    setAssistantTab("basic");
     setAssistantForm({ mode: "create" });
   }
 
@@ -962,7 +952,6 @@ export default function App() {
       glossary: item.glossary ?? [],
     });
     setAssistantError("");
-    setAssistantTab("basic");
     // **作成者でもまず閲覧から始める。** 設定を見に来ただけのときに編集欄が
     // 開いていると、触るつもりのない値を書き換えてしまう。編集は明示的に入る。
     setAssistantForm({ mode: "view", assistantId: item.id });
@@ -1040,7 +1029,6 @@ export default function App() {
       glossary: source.glossary ?? [],
     });
     setAssistantError("");
-    setAssistantTab("basic");
     setAssistantForm({ mode: "create" });
   }
 
@@ -1588,7 +1576,7 @@ export default function App() {
                   </div>
                   {/* 開いた直後は閲覧。編集はここから明示的に入る */}
                   {assistantFormReadOnly && formAssistant?.canEdit && (
-                    <button type="button" className="assistant-edit-enter" onClick={startEditFromView}>編集する</button>
+                    <button type="button" className="primary" onClick={startEditFromView}>編集する</button>
                   )}
                 </header>
 
@@ -1597,21 +1585,11 @@ export default function App() {
                   出典の一覧と参照範囲はサーバー側で決まるため、指示では変えられません。
                 </p>
 
-                <div className="assistant-tabs" role="group" aria-label="アシスタントの設定項目">
-                  {ASSISTANT_TABS.map((tab) => (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      className={`assistant-tab${assistantTab === tab.key ? " is-active" : ""}`}
-                      aria-pressed={assistantTab === tab.key}
-                      onClick={() => setAssistantTab(tab.key)}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-
-                {assistantTab === "basic" && (
+                {/* 設定する項目は多くない。タブで分けると、全部見るのに
+                    4回切り替えることになる。1画面に並べて横幅を使う */}
+                <div className="assistant-sections">
+                <section className="assistant-section">
+                  <h3>基本設定</h3>
                   <div className="assistant-panel">
                     <div className="assistant-icon-editor">
                       <div className="assistant-icon-pick">
@@ -1642,9 +1620,10 @@ export default function App() {
                         onChange={(event) => setAssistantDraft((d) => ({ ...d, description: event.target.value }))} />
                     </label>
                   </div>
-                )}
+                </section>
 
-                {assistantTab === "scope" && (
+                <section className="assistant-section">
+                  <h3>参照範囲</h3>
                   <div className="assistant-panel">
                     {/* 選んだ結果が何件になるかを出す。0件の組み合わせ（公式サイト×電装班など）
                         を選んでも、これが無いと質問するまで気付けない */}
@@ -1700,9 +1679,10 @@ export default function App() {
                       指示に何を書いても混ざりません。
                     </p>
                   </div>
-                )}
+                </section>
 
-                {assistantTab === "instruction" && (
+                <section className="assistant-section">
+                  <h3>指示（口調・書き方）</h3>
                   <div className="assistant-panel">
                     {instructionParts ? (
                       INSTRUCTION_PARTS.map((part) => (
@@ -1742,9 +1722,10 @@ export default function App() {
                       指示が長いほど、資料に使える文脈が減ります。
                     </p>
                   </div>
-                )}
+                </section>
 
-                {assistantTab === "glossary" && (
+                <section className="assistant-section">
+                  <h3>用語集</h3>
                   <div className="assistant-panel">
                     <p className="assistant-hint">
                       部内でしか通じない言い方を、資料での言い方へ読み替えるための表です
@@ -1793,7 +1774,8 @@ export default function App() {
                       </button>
                     )}
                   </div>
-                )}
+                </section>
+                </div>
 
                 {assistantError && <p className="assistant-error" role="alert">{assistantError}</p>}
                 <div className="assistant-actions">
