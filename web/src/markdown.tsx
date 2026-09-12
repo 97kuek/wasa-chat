@@ -109,6 +109,11 @@ function inline(raw: string): Inline {
   );
 
   let html = escapeHtml(protectedText);
+  // **`<br>` だけは改行として通す。** モデルは表のセルの中で改行するのに
+  // これを使う（Markdownの表はセル内改行を書けないため）。エスケープしたままだと
+  // 「<br>」という文字がそのまま表に並ぶ（2026-09-12に本番で確認）。
+  // 閉じタグも属性も取らない要素なので、ここを通しても書ける形は増えない
+  html = html.replace(/&lt;br\s*\/?&gt;/gi, "<br>");
   html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");

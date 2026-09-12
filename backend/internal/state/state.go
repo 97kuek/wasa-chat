@@ -86,6 +86,15 @@ func NormalizeChat(chat Chat) Chat {
 	return chat
 }
 
+// GlossaryEntry は「部内でしか通じない言い方」と「資料での言い方」の対応。
+//
+// Meaning に説明を書けるようにしてあるが、**出典は付かない**。回答本文で
+// これを事実の根拠として述べさせないための規則は assistant.Guard にある。
+type GlossaryEntry struct {
+	Term    string `json:"term" firestore:"term"`
+	Meaning string `json:"meaning" firestore:"meaning"`
+}
+
 // Assistant は利用者が作り、全員で共有するアシスタント。
 //
 // チャット履歴と違い、**利用者名を平文で持つ**（Author）。履歴の保存先は
@@ -102,6 +111,17 @@ type Assistant struct {
 	// 参照範囲の絞り込み。空なら絞らない。**広げる方向の指定は存在しない**
 	Team   string `json:"team,omitempty" firestore:"team,omitempty"`
 	Origin string `json:"origin,omitempty" firestore:"origin,omitempty"` // "" | "wiki" | "site" | "fee"
+
+	// Glossary は略語や言い回しの対応表。**語の言い換えだけを置く場所である。**
+	//
+	// 新入生は略語を知らない前提で質問する（TFは288回・リブは346回本文に出るのに、
+	// Wikiが「〜とは」で定義している語は3語しかない）。作成者がその対応を
+	// 書けると、資料の語へ届く。
+	//
+	// ⚠️ **事実を書く場所にしないこと。** 「プラホは41代で廃止」のような記述は、
+	// 出典カードが付かないまま回答へ出る。出典は索引から組み立てるという保証を
+	// ここから迂回できてしまう。規則は assistant.Guard 側で明示している。
+	Glossary []GlossaryEntry `json:"glossary,omitempty" firestore:"glossary,omitempty"`
 
 	// Icon は data URI の画像。空なら画面側が名前の頭文字で描く。
 	// 外部URLを許さないのは、部内Wikiの利用状況が外部ホストへ漏れるのと、

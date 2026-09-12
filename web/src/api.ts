@@ -153,6 +153,15 @@ export async function submitFeedback(payload: FeedbackPayload): Promise<void> {
   }
 }
 
+/**
+ * 部内の言い方と、資料での言い方の対応。
+ *
+ * **語の言い換えを置く場所であって、事実を置く場所ではない。** ここに書いたものには
+ * 出典が付かないため、事実として回答に出ると確かめようがなくなる。規則はサーバー側の
+ * system（assistant.Guard）にも入れてある。
+ */
+export type GlossaryEntry = { term: string; meaning: string };
+
 /** 全員で共有するアシスタント。作成者名は隠さない（誰に聞けばよいか分かるため）。 */
 export type Assistant = {
   id: string;
@@ -163,6 +172,7 @@ export type Assistant = {
   origin?: "wiki" | "site";
   /** data URI の画像。未設定なら画面側が名前の頭文字で描く。 */
   icon?: string;
+  glossary?: GlossaryEntry[];
   author: string;
   createdAt: string;
   updatedAt: string;
@@ -176,11 +186,21 @@ export type Assistant = {
  *  存在しない呼び方を画面で組み立てないため）。 */
 export type Team = { value: string; label: string };
 
-export async function listAssistants(): Promise<{ assistants: Assistant[]; teams: Team[] }> {
+/**
+ * 出所と区分の組み合わせごとに、参照できるページ数。キーは `出所/区分`。
+ * 参照範囲を選んだ結果が質問するまで分からなかったので、サーバーが索引を数えて返す。
+ */
+export type ScopeCounts = Record<string, number>;
+
+export async function listAssistants(): Promise<{
+  assistants: Assistant[];
+  teams: Team[];
+  scopeCounts: ScopeCounts;
+}> {
   const res = await fetch(`${API_ORIGIN}/api/assistants`, { credentials: "include" });
   if (!res.ok) throw new Error("アシスタントを読み込めませんでした");
-  const body = await res.json() as { assistants?: Assistant[]; teams?: Team[] };
-  return { assistants: body.assistants ?? [], teams: body.teams ?? [] };
+  const body = await res.json() as { assistants?: Assistant[]; teams?: Team[]; scopeCounts?: ScopeCounts };
+  return { assistants: body.assistants ?? [], teams: body.teams ?? [], scopeCounts: body.scopeCounts ?? {} };
 }
 
 export type AssistantDraft = {
@@ -191,6 +211,7 @@ export type AssistantDraft = {
   team?: string;
   origin?: "wiki" | "site";
   icon?: string;
+  glossary?: GlossaryEntry[];
 };
 
 export async function createAssistant(draft: AssistantDraft): Promise<Assistant> {

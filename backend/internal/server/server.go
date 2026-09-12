@@ -653,9 +653,52 @@ func (s *Server) handleListAssistants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"assistants": s.assistantViews(r.Context(), list, user),
-		"teams":      assistant.Teams,
+		"assistants":  s.assistantViews(r.Context(), list, user),
+		"teams":       assistant.Teams,
+		"scopeCounts": s.scopeCounts(),
 	})
+}
+
+// scopeCounts は、出所と区分の組み合わせごとに何ページ参照できるかを返す。
+//
+// 参照範囲の指定は今まで「選べるが、結果が見えない」ものだった。0件になる
+// 組み合わせ（公式サイト × 電装班など）を選んでも、質問するまで気付けない。
+// 索引を数えるだけなので、一覧を返すついでに全組み合わせを渡して画面で引く。
+//
+// 検索対象にならないページ（チャンクが無いもの）は数えない。目次には残るが
+// 本文を読めないため、「参照できる資料の数」としては誤解になる。
+func (s *Server) scopeCounts() map[string]int {
+	if s.ix == nil {
+		return nil // 索引を持たない構成（テストの一部）では件数を出さない
+	}
+	counts := make(map[string]int, len(assistant.Teams)*4)
+	origins := []string{"", "wiki", "site", "fee"}
+	teams := make([]string, 0, len(assistant.Teams)+1)
+	teams = append(teams, "")
+	for _, team := range assistant.Teams {
+		teams = append(teams, team.Value)
+	}
+	for i := range s.ix.Pages {
+		page := &s.ix.Pages[i]
+		if len(page.Chunks) == 0 {
+			continue
+		}
+		source := page.Source
+		if source == "" {
+			source = "wiki" // 旧い index.json には source が無い
+		}
+		for _, origin := range origins {
+			if origin != "" && origin != source {
+				continue
+			}
+			for _, team := range teams {
+				if assistant.TeamMatches(team, page.Team) {
+					counts[origin+"/"+team]++
+				}
+			}
+		}
+	}
+	return counts
 }
 
 func (s *Server) handleCreateAssistant(w http.ResponseWriter, r *http.Request) {

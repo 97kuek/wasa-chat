@@ -15,9 +15,10 @@ import {
   updateProfileIcon,
   type Assistant,
   type AssistantDraft,
+  type GlossaryEntry,
+  type ScopeCounts,
   type Chat,
   type FeedbackReason,
-  type ResponseMode,
   type StageTimingName,
   type Team,
   type Turn,
@@ -90,7 +91,6 @@ const ANNOUNCEMENT_READ_KEY = "wasa-chat-read-announcements";
 const ASSISTANT_KEY = "wasa-chat-assistant";
 const ASSISTANT_FAVORITES_KEY = "wasa-chat-assistant-favorites";
 const ASSISTANT_SORT_KEY = "wasa-chat-assistant-sort";
-const RESPONSE_MODE_KEY = "wasa-chat-response-mode";
 function resizeComposerTextarea(target: HTMLTextAreaElement | null): void {
   if (!target) return;
   target.style.height = "auto";
@@ -118,37 +118,84 @@ const ASSISTANT_SORT_OPTIONS: SelectOption[] = [
   { value: "author", label: "作成者順" },
 ];
 
-const RESPONSE_MODE_OPTIONS: SelectOption[] = [
-  { value: "auto", label: "auto", description: "質問に合わせて自動調整" },
-  { value: "deep", label: "thinking", description: "比較や変遷を時間をかけて整理" },
-];
 
-// 画面に出るのは auto と thinking だけ。fast / standard は自動判定の内部段階で、
-// 通常画面には出さない（履歴の表示に使う保険として名前だけ持つ）。
-const RESPONSE_MODE_LABELS: Record<ResponseMode, string> = {
-  auto: "auto",
-  fast: "fast",
-  standard: "standard",
-  deep: "thinking",
-};
 
-function loadResponseMode(): "auto" | "deep" {
-  // 旧画面の高速・標準は内部の自動判定へ戻す。利用者に速度の細分を求めない。
-  return readStored("local", RESPONSE_MODE_KEY) === "deep" ? "deep" : "auto";
+const emptyDraft: AssistantDraft = { id: "", name: "", description: "", instruction: "", glossary: [] };
+
+/**
+ * 指示の書き方を4つに分ける。
+ *
+ * 以前は1500字の自由記述が1つだけで、**何を書けばよいかが画面から分からなかった。**
+ * 分けたぶんは保存時に1本の文字列へ戻すので、サーバー側（検証・system規則・
+ * プロンプトの組み立て）は何も変わらない。
+ */
+const INSTRUCTION_PARTS = [
+  { key: "role", heading: "役割", hint: "例: 新入生に教える先輩として答える", rows: 3 },
+  { key: "tone", heading: "口調", hint: "例: 語尾を「〜しゅよ」にする。一人称は「ぼく」", rows: 3 },
+  { key: "format", heading: "出力の形", hint: "例: 箇条書き中心。手順には番号を振る", rows: 3 },
+  { key: "avoid", heading: "やらないこと", hint: "例: 専門用語をそのまま使わない", rows: 2 },
+] as const;
+
+type InstructionParts = Record<(typeof INSTRUCTION_PARTS)[number]["key"], string>;
+
+const emptyInstructionParts = (): InstructionParts =>
+  Object.fromEntries(INSTRUCTION_PARTS.map((part) => [part.key, ""])) as InstructionParts;
+
+/**
+ * 型に沿った指示を4つの欄へ戻す。沿っていなければ null を返す。
+ *
+ * **自由記述で書かれた既存の指示を壊さないこと。** 無理に分解すると、
+ * 作った人の文章が勝手に並べ替わる。読めないものは自由記述のまま扱う。
+ */
+function splitInstruction(text: string): InstructionParts | null {
+  if (!text.trim()) return emptyInstructionParts(); // 新規作成は型から始める
+  const headings = new Map<string, keyof InstructionParts>(
+    INSTRUCTION_PARTS.map((part) => [part.heading as string, part.key]),
+  );
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  if (!lines[0].startsWith("## ") || !headings.has(lines[0].slice(3).trim())) return null;
+
+  const parts = emptyInstructionParts();
+  let current: keyof InstructionParts | null = null;
+  const buffer: string[] = [];
+  const flush = () => {
+    if (current) parts[current] = buffer.join("\n").trim();
+    buffer.length = 0;
+  };
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      const key = headings.get(line.slice(3).trim());
+      if (!key) return null; // 知らない見出しがある ＝ 手で書かれた文章
+      flush();
+      current = key;
+      continue;
+    }
+    buffer.push(line);
+  }
+  flush();
+  return parts;
 }
 
-const emptyDraft: AssistantDraft = { id: "", name: "", description: "", instruction: "" };
+/** 4つの欄を1本の指示へ戻す。**空の欄は見出しごと落とす**（プロンプトに空行を並べない）。 */
+function joinInstruction(parts: InstructionParts): string {
+  return INSTRUCTION_PARTS.filter((part) => parts[part.key].trim())
+    .map((part) => `## ${part.heading}\n${parts[part.key].trim()}`)
+    .join("\n\n");
+}
+
+type AssistantTab = "basic" | "scope" | "instruction" | "glossary";
+
+const ASSISTANT_TABS: { key: AssistantTab; label: string }[] = [
+  { key: "basic", label: "基本設定" },
+  { key: "scope", label: "参照範囲" },
+  { key: "instruction", label: "指示" },
+  { key: "glossary", label: "用語集" },
+];
 
 /**
  * 回答末尾の「出典: ページ名（最終更新: YYYY-MM）」を落とす。
  * 同じ情報を構造化された出典カードでも表示するため、本文との重複だけを除く。
  */
-function turnModeLabel(turn: Turn): string | null {
-  if (!turn.responseMode) return null;
-  if (turn.responseMode === "auto") return "自動";
-  return RESPONSE_MODE_LABELS[turn.responseMode];
-}
-
 /** 新入生や代替わり直後でも質問を始められるよう、具体的な入口を用意する。 */
 const SUGGESTIONS: { title: string; body: string }[] = [
   { title: "空力設計の手順", body: "空力設計の設計手順について、詳しく分かりやすく説明してください" },
@@ -223,7 +270,10 @@ export default function App() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [favoriteAssistantIds, setFavoriteAssistantIds] = useState(loadFavoriteAssistantIds);
   const [assistantSort, setAssistantSort] = useState<AssistantSort>(loadAssistantSort);
-  const [responseMode, setResponseMode] = useState<"auto" | "deep">(loadResponseMode);
+  // **回答モードは選ばせない。** 実運用では thinking しか使われておらず、
+  // 選択肢を出すぶんだけ画面と履歴表示が増えていた（2026-09-12に人間が判断）。
+  // サーバー側の許可リストは残してあるので、必要になれば画面だけ戻せる
+  const responseMode = "deep" as const;
   // 選んだアシスタントは端末に覚える。毎回選び直させると、結局
   // 誰も使わない機能になる（サーバーに持つほどの情報でもない）
   const [assistantId, setAssistantId] = useState(() => readStored("local", ASSISTANT_KEY) ?? "");
@@ -236,6 +286,9 @@ export default function App() {
   const [assistantForm, setAssistantForm] = useState<{ mode: AssistantFormMode; assistantId?: string } | null>(null);
   const [assistantDraft, setAssistantDraft] = useState<AssistantDraft>(emptyDraft);
   const [assistantError, setAssistantError] = useState("");
+  // 出所と区分の組み合わせごとの参照できるページ数。サーバーが索引を数えて返す
+  const [scopeCounts, setScopeCounts] = useState<ScopeCounts>({});
+  const [assistantTab, setAssistantTab] = useState<AssistantTab>("basic");
   const bottom = useRef<HTMLDivElement>(null);
   const conversation = useRef<HTMLElement>(null);
   const questionInput = useRef<HTMLTextAreaElement>(null);
@@ -261,6 +314,10 @@ export default function App() {
     ? assistants.find((item) => item.id === assistantForm.assistantId)
     : undefined;
   const assistantFormReadOnly = assistantForm?.mode === "view";
+  // 指示は1本の文字列が正本で、4つの欄はその見え方にすぎない。
+  // 状態を2つ持つと必ずずれるので、毎回そこから読み直す
+  const instructionParts = splitInstruction(assistantDraft.instruction);
+  const scopeCount = scopeCounts[`${assistantDraft.origin ?? ""}/${assistantDraft.team ?? ""}`] ?? 0;
   const activeChat = chats.find((chat) => chat.id === activeChatId);
   const streaming = chats.some((chat) => chat.turns.some((turn) => turn.streaming));
   const unreadCount = announcements.filter((announcement) => !readAnnouncementIds.includes(announcement.id)).length;
@@ -795,9 +852,10 @@ export default function App() {
 
   async function refreshAssistants() {
     try {
-      const { assistants: list, teams: names } = await listAssistants();
+      const { assistants: list, teams: names, scopeCounts: counts } = await listAssistants();
       setAssistants(list);
       setTeams(names);
+      setScopeCounts(counts);
       // 削除済みのIDを選んだままだと、絞り込みが効いているつもりで
       // 効いていない状態になる。存在しなければ汎用へ戻す
       setAssistantId((current) => (list.some((item) => item.id === current) ? current : ""));
@@ -868,7 +926,24 @@ export default function App() {
   function startCreate() {
     setAssistantDraft(emptyDraft);
     setAssistantError("");
+    setAssistantTab("basic");
     setAssistantForm({ mode: "create" });
+  }
+
+  /** 閲覧から編集へ入る。開いた瞬間から編集できる作りにはしない。 */
+  function startEditFromView() {
+    if (!assistantForm?.assistantId) return;
+    setAssistantError("");
+    setAssistantForm({ mode: "edit", assistantId: assistantForm.assistantId });
+  }
+
+  /** 指示の4つの欄のうち1つを書き換える。保存する形は1本の文字列のまま。 */
+  function updateInstructionPart(parts: InstructionParts, key: keyof InstructionParts, value: string) {
+    setAssistantDraft((d) => ({ ...d, instruction: joinInstruction({ ...parts, [key]: value }) }));
+  }
+
+  function updateGlossary(next: GlossaryEntry[]) {
+    setAssistantDraft((d) => ({ ...d, glossary: next }));
   }
 
   function openAssistantSettings(item: Assistant) {
@@ -884,11 +959,13 @@ export default function App() {
       team: item.team,
       origin: item.origin,
       icon: item.icon,
+      glossary: item.glossary ?? [],
     });
     setAssistantError("");
-    // 作成者と管理者は同じ画面で編集できる。それ以外の人にも指示を公開し、
-    // 内容を確認・コピーして自分のアシスタント作成に使えるようにする。
-    setAssistantForm({ mode: item.canEdit ? "edit" : "view", assistantId: item.id });
+    setAssistantTab("basic");
+    // **作成者でもまず閲覧から始める。** 設定を見に来ただけのときに編集欄が
+    // 開いていると、触るつもりのない値を書き換えてしまう。編集は明示的に入る。
+    setAssistantForm({ mode: "view", assistantId: item.id });
     setView("assistants");
     closeSidebarOnMobile();
   }
@@ -960,8 +1037,10 @@ export default function App() {
       team: source.team,
       origin: source.origin,
       icon: source.icon,
+      glossary: source.glossary ?? [],
     });
     setAssistantError("");
+    setAssistantTab("basic");
     setAssistantForm({ mode: "create" });
   }
 
@@ -1178,7 +1257,7 @@ export default function App() {
           <img src={APP_URLS.logo} alt="WASA Chat" className="brand-logo-large" />
           <div className="login-heading">
             <h1 className="visually-hidden">WASA Chat</h1>
-            <p className="muted">WASA Wikiと同じ利用者名・パスワードでログイン</p>
+            <p className="muted">WASA Wikiと同じアカウントでログイン</p>
           </div>
           <label>
             <span>利用者名</span>
@@ -1497,99 +1576,225 @@ export default function App() {
           <main className="assistant-page">
             {assistantForm ? (
               <form className="assistant-form" onSubmit={(event) => void handleSubmitAssistant(event)}>
-                <header>
-                  <h2>{assistantForm.mode === "view"
-                    ? "アシスタントの設定"
-                    : assistantForm.mode === "edit" ? "アシスタントを編集" : "アシスタントを作る"}</h2>
-                  <p className="muted">
+                <header className="assistant-form-head">
+                  <div className="assistant-form-title">
+                    <AssistantAvatar name={assistantDraft.name || "?"} icon={assistantDraft.icon} size={40} />
+                    <div>
+                      <h2>{assistantDraft.name || (assistantForm.mode === "create" ? "アシスタントを作る" : "アシスタント")}</h2>
+                      <p className="muted">
+                        {formAssistant ? <>作成: {formAssistant.author}</> : "誰でも作れて、全員が使えます"}
+                      </p>
+                    </div>
+                  </div>
+                  {/* 開いた直後は閲覧。編集はここから明示的に入る */}
+                  {assistantFormReadOnly && formAssistant?.canEdit && (
+                    <button type="button" className="assistant-edit-enter" onClick={startEditFromView}>編集する</button>
+                  )}
+                </header>
+
+                <p className="assistant-form-note">
+                  書けるのは<strong>口調・書き方・参照範囲・用語集</strong>だけです。
+                  出典の一覧と参照範囲はサーバー側で決まるため、指示では変えられません。
+                </p>
+
+                <div className="assistant-tabs" role="group" aria-label="アシスタントの設定項目">
+                  {ASSISTANT_TABS.map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      className={`assistant-tab${assistantTab === tab.key ? " is-active" : ""}`}
+                      aria-pressed={assistantTab === tab.key}
+                      onClick={() => setAssistantTab(tab.key)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {assistantTab === "basic" && (
+                  <div className="assistant-panel">
+                    <div className="assistant-icon-editor">
+                      <div className="assistant-icon-pick">
+                        {/* 画像が無くても頭文字で成立させる。用意しないと見栄えが悪い状態にすると、
+                            結局だれもアシスタントを作らなくなる */}
+                        <AssistantAvatar name={assistantDraft.name || "?"} icon={assistantDraft.icon} size={72} />
+                        {!assistantFormReadOnly && <label className="assistant-icon-button">
+                          <span>{assistantDraft.icon ? "変更" : "画像を選ぶ"}</span>
+                          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void handlePickIcon(event)} />
+                        </label>}
+                        {!assistantFormReadOnly && assistantDraft.icon && (
+                          <button type="button" className="linkish" onClick={() => {
+                            setAssistantDraft((d) => ({ ...d, icon: undefined }));
+                          }}>
+                            画像を外す
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <label>
+                      <span>名前</span>
+                      <input value={assistantDraft.name} maxLength={APP_LIMITS.assistantNameRunes} required readOnly={assistantFormReadOnly}
+                        onChange={(event) => setAssistantDraft((d) => ({ ...d, name: event.target.value }))} />
+                    </label>
+                    <label>
+                      <span>説明（一覧に出ます）</span>
+                      <input value={assistantDraft.description} maxLength={APP_LIMITS.assistantDescriptionRunes} readOnly={assistantFormReadOnly}
+                        onChange={(event) => setAssistantDraft((d) => ({ ...d, description: event.target.value }))} />
+                    </label>
+                  </div>
+                )}
+
+                {assistantTab === "scope" && (
+                  <div className="assistant-panel">
+                    {/* 選んだ結果が何件になるかを出す。0件の組み合わせ（公式サイト×電装班など）
+                        を選んでも、これが無いと質問するまで気付けない */}
+                    <p className="assistant-scope-count">
+                      この条件で参照できる資料: <strong>{scopeCount}件</strong>
+                      {scopeCount === 0 && <span className="assistant-scope-warn">（0件です。範囲を広げてください）</span>}
+                    </p>
                     {assistantFormReadOnly ? (
-                      <>作成: {formAssistant?.author ?? "不明"}。指示は選択してコピーできます。</>
+                      <div className="assistant-scope">
+                        <div className="assistant-field">
+                          <span>参照する出所</span>
+                          <p className="assistant-readonly-value">
+                            {ORIGIN_OPTIONS.find((option) => option.value === (assistantDraft.origin ?? ""))?.label ?? "すべて"}
+                          </p>
+                        </div>
+                        <div className="assistant-field">
+                          <span>参照する区分</span>
+                          <p className="assistant-readonly-value">
+                            {teams.find((team) => team.value === assistantDraft.team)?.label ?? "すべて"}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="assistant-scope">
+                        <div className="assistant-field">
+                          <span>参照する出所</span>
+                          <SelectMenu
+                            label="参照する出所"
+                            value={assistantDraft.origin ?? ""}
+                            options={ORIGIN_OPTIONS}
+                            onChange={(value) => setAssistantDraft((d) => ({
+                              ...d,
+                              origin: (value || undefined) as AssistantDraft["origin"],
+                            }))}
+                          />
+                        </div>
+                        <div className="assistant-field">
+                          <span>参照する区分</span>
+                          <SelectMenu
+                            label="参照する区分"
+                            value={assistantDraft.team ?? ""}
+                            options={[
+                              { value: "", label: "すべて" },
+                              ...teams.map((team) => ({ value: team.value, label: team.label })),
+                            ]}
+                            onChange={(value) => setAssistantDraft((d) => ({ ...d, team: value || undefined }))}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <p className="assistant-hint">
+                      指定できるのは<strong>狭める方向だけ</strong>です。範囲外の資料はサーバー側で外れるため、
+                      指示に何を書いても混ざりません。
+                    </p>
+                  </div>
+                )}
+
+                {assistantTab === "instruction" && (
+                  <div className="assistant-panel">
+                    {instructionParts ? (
+                      INSTRUCTION_PARTS.map((part) => (
+                        <label key={part.key}>
+                          <span>{part.heading}</span>
+                          <textarea
+                            value={instructionParts[part.key]}
+                            rows={part.rows}
+                            readOnly={assistantFormReadOnly}
+                            placeholder={part.hint}
+                            onChange={(event) => updateInstructionPart(instructionParts, part.key, event.target.value)}
+                          />
+                        </label>
+                      ))
                     ) : (
                       <>
-                        書けるのは<strong>口調・書き方・参照範囲</strong>だけです。
-                        <br />
-                        出典の一覧と参照範囲はサーバー側で決まるため、指示では変えられません。
+                        {/* 型に沿っていない既存の指示は、勝手に分解しない。
+                            文章が並べ替わると、作った人の意図が変わる */}
+                        <label>
+                          <span>指示（自由記述）</span>
+                          <textarea value={assistantDraft.instruction} rows={10} maxLength={APP_LIMITS.assistantInstructionRunes}
+                            required readOnly={assistantFormReadOnly}
+                            onChange={(event) => setAssistantDraft((d) => ({ ...d, instruction: event.target.value }))} />
+                        </label>
+                        {!assistantFormReadOnly && (
+                          <button type="button" className="linkish" onClick={() => setAssistantDraft((d) => ({
+                            ...d,
+                            instruction: joinInstruction({ ...emptyInstructionParts(), role: d.instruction.trim() }),
+                          }))}>
+                            型に沿って書く（いまの文章は「役割」へ入ります）
+                          </button>
+                        )}
                       </>
                     )}
-                  </p>
-                </header>
-                <div className="assistant-icon-editor">
-                  <div className="assistant-icon-pick">
-                    {/* 画像が無くても頭文字で成立させる。用意しないと見栄えが悪い状態にすると、
-                        結局だれもアシスタントを作らなくなる */}
-                    <AssistantAvatar name={assistantDraft.name || "?"} icon={assistantDraft.icon} size={72} />
-                    {!assistantFormReadOnly && <label className="assistant-icon-button">
-                      <span>{assistantDraft.icon ? "変更" : "画像を選ぶ"}</span>
-                      <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void handlePickIcon(event)} />
-                    </label>}
-                    {!assistantFormReadOnly && assistantDraft.icon && (
-                      <button type="button" className="linkish" onClick={() => {
-                        setAssistantDraft((d) => ({ ...d, icon: undefined }));
-                      }}>
-                        画像を外す
+                    <p className="assistant-hint">
+                      {assistantDraft.instruction.length} / {APP_LIMITS.assistantInstructionRunes}文字。
+                      指示が長いほど、資料に使える文脈が減ります。
+                    </p>
+                  </div>
+                )}
+
+                {assistantTab === "glossary" && (
+                  <div className="assistant-panel">
+                    <p className="assistant-hint">
+                      部内でしか通じない言い方を、資料での言い方へ読み替えるための表です
+                      （「ペラ」→「プロペラ」など）。
+                      <strong>事実を書く場所ではありません。</strong>
+                      ここに書いたものには出典が付かないため、事実としては扱われません。
+                    </p>
+                    <ul className="glossary-list">
+                      {(assistantDraft.glossary ?? []).map((entry, index) => (
+                        <li key={index}>
+                          <input
+                            value={entry.term}
+                            aria-label={`用語 ${index + 1}`}
+                            placeholder="ペラ"
+                            maxLength={APP_LIMITS.glossaryTermRunes}
+                            readOnly={assistantFormReadOnly}
+                            onChange={(event) => updateGlossary((assistantDraft.glossary ?? []).map((item, i) =>
+                              i === index ? { ...item, term: event.target.value } : item))}
+                          />
+                          <input
+                            value={entry.meaning}
+                            aria-label={`意味 ${index + 1}`}
+                            placeholder="プロペラ"
+                            maxLength={APP_LIMITS.glossaryMeaningRunes}
+                            readOnly={assistantFormReadOnly}
+                            onChange={(event) => updateGlossary((assistantDraft.glossary ?? []).map((item, i) =>
+                              i === index ? { ...item, meaning: event.target.value } : item))}
+                          />
+                          {!assistantFormReadOnly && (
+                            <button type="button" aria-label={`${index + 1}行目を削除`} title="削除"
+                              onClick={() => updateGlossary((assistantDraft.glossary ?? []).filter((_, i) => i !== index))}>
+                              ×
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    {(assistantDraft.glossary ?? []).length === 0 && (
+                      <p className="muted">まだ登録がありません。</p>
+                    )}
+                    {!assistantFormReadOnly && (
+                      <button type="button" className="linkish"
+                        disabled={(assistantDraft.glossary ?? []).length >= APP_LIMITS.glossaryEntries}
+                        onClick={() => updateGlossary([...(assistantDraft.glossary ?? []), { term: "", meaning: "" }])}>
+                        用語を追加（{(assistantDraft.glossary ?? []).length} / {APP_LIMITS.glossaryEntries}）
                       </button>
                     )}
                   </div>
-                </div>
-                <label>
-                  <span>名前</span>
-                  <input value={assistantDraft.name} maxLength={APP_LIMITS.assistantNameRunes} required readOnly={assistantFormReadOnly}
-                    onChange={(event) => setAssistantDraft((d) => ({ ...d, name: event.target.value }))} />
-                </label>
-                <label>
-                  <span>説明（一覧に出ます）</span>
-                  <input value={assistantDraft.description} maxLength={APP_LIMITS.assistantDescriptionRunes} readOnly={assistantFormReadOnly}
-                    onChange={(event) => setAssistantDraft((d) => ({ ...d, description: event.target.value }))} />
-                </label>
-                <label>
-                  <span>指示（口調・書き方）</span>
-                  <textarea value={assistantDraft.instruction} rows={8} maxLength={APP_LIMITS.assistantInstructionRunes} required readOnly={assistantFormReadOnly}
-                    placeholder="例: 語尾を「〜しゅよ」にする。一人称は「ぼく」。明るくのんびりした調子で話す。"
-                    onChange={(event) => setAssistantDraft((d) => ({ ...d, instruction: event.target.value }))} />
-                </label>
-                {assistantFormReadOnly ? (
-                  <div className="assistant-scope">
-                    <div className="assistant-field">
-                      <span>参照する出所</span>
-                      <p className="assistant-readonly-value">
-                        {ORIGIN_OPTIONS.find((option) => option.value === (assistantDraft.origin ?? ""))?.label ?? "すべて"}
-                      </p>
-                    </div>
-                    <div className="assistant-field">
-                      <span>参照する区分</span>
-                      <p className="assistant-readonly-value">
-                        {teams.find((team) => team.value === assistantDraft.team)?.label ?? "すべて"}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="assistant-scope">
-                    <div className="assistant-field">
-                      <span>参照する出所</span>
-                      <SelectMenu
-                        label="参照する出所"
-                        value={assistantDraft.origin ?? ""}
-                        options={ORIGIN_OPTIONS}
-                        onChange={(value) => setAssistantDraft((d) => ({
-                          ...d,
-                          origin: (value || undefined) as AssistantDraft["origin"],
-                        }))}
-                      />
-                    </div>
-                    <div className="assistant-field">
-                      <span>参照する区分</span>
-                      <SelectMenu
-                        label="参照する区分"
-                        value={assistantDraft.team ?? ""}
-                        options={[
-                          { value: "", label: "すべて" },
-                          ...teams.map((team) => ({ value: team.value, label: team.label })),
-                        ]}
-                        onChange={(value) => setAssistantDraft((d) => ({ ...d, team: value || undefined }))}
-                      />
-                    </div>
-                  </div>
                 )}
+
                 {assistantError && <p className="assistant-error" role="alert">{assistantError}</p>}
                 <div className="assistant-actions">
                   <button type="button" onClick={closeAssistantForm}>戻る</button>
@@ -1720,7 +1925,6 @@ export default function App() {
                 <div className="assistant-content">
                   <div className="answer-author">
                     <span>{turn.assistantName ?? "WASA Chat"}</span>
-                    {turnModeLabel(turn) && <span className="answer-mode">{turnModeLabel(turn)}</span>}
                   </div>
                   {turn.status && (
                     <div className="status">
@@ -1801,24 +2005,6 @@ export default function App() {
               </svg>
             </button>
           )}
-          {/* 回答モードは毎回変えるものではない。名前と説明で1行を占めていたが、
-              選択肢そのもの（auto / thinking）で見分けが付くので畳んだ。
-              説明は選択肢の中に残してあるので、開けば読める */}
-          <div className="response-mode-bar">
-            <div className="response-mode-select">
-              <SelectMenu
-                label="回答モード"
-                value={responseMode}
-                options={RESPONSE_MODE_OPTIONS}
-                onChange={(value) => {
-                  const next = value === "deep" ? "deep" : "auto";
-                  setResponseMode(next);
-                  writeStored("local", RESPONSE_MODE_KEY, next);
-                }}
-              />
-            </div>
-
-          </div>
           {attachment && (
             <div className="attachment-row">
             <div className="attachment-chip">

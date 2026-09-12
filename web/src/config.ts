@@ -16,6 +16,11 @@ export const APP_LIMITS = {
   assistantNameRunes: 40,
   assistantDescriptionRunes: 120,
   assistantInstructionRunes: 1_500,
+  // 用語集の上限。サーバー側（internal/assistant）と同じ値にする。
+  // 画面で先に止めないと、入力し終えてから保存で弾かれる
+  glossaryEntries: 30,
+  glossaryTermRunes: 20,
+  glossaryMeaningRunes: 60,
   conversationTurns: 2,
   conversationAnswerRunes: 2_000,
   composerVisibleLines: 5,

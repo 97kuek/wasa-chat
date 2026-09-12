@@ -200,3 +200,72 @@ func TestBundledSeedsAreValid(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------- 用語集
+
+func TestValidateGlossary(t *testing.T) {
+	base := func(entries ...state.GlossaryEntry) state.Assistant {
+		return state.Assistant{ID: "test", Name: "テスト", Instruction: "やさしく話す", Glossary: entries}
+	}
+	cases := []struct {
+		name    string
+		入力      []state.GlossaryEntry
+		wantErr bool
+		want    int
+	}{
+		{"普通の対応表", []state.GlossaryEntry{{Term: "ペラ", Meaning: "プロペラ"}}, false, 1},
+		{"空の行は落とす", []state.GlossaryEntry{{Term: "ペラ", Meaning: "プロペラ"}, {}}, false, 1},
+		{"片方だけは弾く", []state.GlossaryEntry{{Term: "ペラ"}}, true, 0},
+		{"重複は弾く", []state.GlossaryEntry{{Term: "TF", Meaning: "テストフライト"}, {Term: "TF", Meaning: "別の意味"}}, true, 0},
+		{"語が長すぎる", []state.GlossaryEntry{{Term: strings.Repeat("あ", MaxGlossaryTerm+1), Meaning: "意味"}}, true, 0},
+		{"意味が長すぎる", []state.GlossaryEntry{{Term: "語", Meaning: strings.Repeat("あ", MaxGlossaryMeaning+1)}}, true, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := base(tc.入力...)
+			err := Validate(&a)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("err=%v、想定は wantErr=%v", err, tc.wantErr)
+			}
+			if err == nil && len(a.Glossary) != tc.want {
+				t.Fatalf("%d件になった。想定は%d件", len(a.Glossary), tc.want)
+			}
+		})
+	}
+
+	many := make([]state.GlossaryEntry, MaxGlossaryEntries+1)
+	for i := range many {
+		many[i] = state.GlossaryEntry{Term: string(rune('あ' + i)), Meaning: "意味"}
+	}
+	a := base(many...)
+	if err := Validate(&a); err == nil {
+		t.Fatal("件数の上限を超えても通ってしまった")
+	}
+}
+
+// 用語集は語の言い換えであって事実ではない。**出典が付かないものを事実として
+// 述べさせないこと**が、この機能でいちばん守りたい線である。
+func TestGlossaryIsNotEvidence(t *testing.T) {
+	a := state.Assistant{
+		ID: "t", Name: "テスト", Instruction: "やさしく",
+		Glossary: []state.GlossaryEntry{{Term: "プラホ", Meaning: "プラスチックホルダー"}},
+	}
+	section := PromptSection(&a)
+	if !strings.Contains(section, "プラホ: プラスチックホルダー") {
+		t.Fatalf("用語集が指示へ入っていない:\n%s", section)
+	}
+	if !strings.Contains(section, "事実の根拠にしない") {
+		t.Fatalf("用語集を事実にしない断りが無い:\n%s", section)
+	}
+	// 立場の強い側（system）にも置く。指示側だけだと利用者の文章と同格になる
+	if !strings.Contains(SystemGuard(&a), "用語集を出典にしない") {
+		t.Fatal("systemの規則に用語集の扱いが無い")
+	}
+}
+
+func TestPromptSectionOmitsEmptyGlossary(t *testing.T) {
+	a := state.Assistant{ID: "t", Name: "テスト", Instruction: "やさしく"}
+	if strings.Contains(PromptSection(&a), "用語集") {
+		t.Fatal("用語集が空でも見出しが出ている")
+	}
+}

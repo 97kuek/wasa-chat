@@ -1724,6 +1724,22 @@ button:disabled {
   border-radius: 8px;
 }
 
+/* 表とコードは、収まらないときだけ端に影を出す。
+   **「切れている」のか「横に続いている」のかが分からないと、壊れて見える。**
+   `local` と `scroll` の組み合わせで、端まで送ったときだけ影が消える */
+.table-scroll,
+.prose pre.code-block {
+  background-image:
+    linear-gradient(to right, var(--surface) 30%, rgb(255 255 255 / 0%)),
+    linear-gradient(to left, var(--surface) 30%, rgb(255 255 255 / 0%)),
+    linear-gradient(to right, rgb(35 31 28 / 12%), rgb(35 31 28 / 0%)),
+    linear-gradient(to left, rgb(35 31 28 / 12%), rgb(35 31 28 / 0%));
+  background-position: left center, right center, left center, right center;
+  background-size: 28px 100%, 28px 100%, 12px 100%, 12px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+
 .prose table {
   width: 100%;
   border-collapse: collapse;
@@ -1750,9 +1766,10 @@ button:disabled {
 .prose td.col-center, .prose th.col-center { text-align: center; }
 
 .prose thead th {
-  background: var(--surface-soft);
+  /* 見出し行は会話の吹き出しと同じ色にする。灰色だと、本文の中で
+     ここだけ別の部品のように浮いて見える */
+  background: var(--accent-soft);
   font-weight: 600;
-  white-space: nowrap;
 }
 
 .prose tbody tr:last-child td { border-bottom: 0; }
@@ -1806,32 +1823,9 @@ button:disabled {
   stroke-linejoin: round;
 }
 
-.response-mode-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
 
-.response-mode-select {
-  /* thinking が入る幅。狭いと文字が省略されて選択中の値が読めない */
-  width: 116px;
-}
 
-.response-mode-select .select-menu-trigger {
-  min-height: 30px;
-  padding: 4px 8px 4px 10px;
-  border-color: var(--line);
-  border-radius: 999px;
-  background: rgb(255 255 255 / 92%);
-  font-size: 12px;
-}
 
-.response-mode-select .select-menu-trigger svg {
-  width: 16px;
-}
 
 .select-menu-text {
   display: grid;
@@ -1848,17 +1842,7 @@ button:disabled {
 /* 入力欄は画面の一番下にある。下へ開くと画面外へ出て選べない。
    セレクタから `.response-mode-select` が抜けると、後ろにある基底の
    `.select-menu-options` に負けて下開きへ戻る（2026-08-10に実際に壊した） */
-.response-mode-select .select-menu-options {
-  top: auto;
-  bottom: calc(100% + 6px);
-  width: 180px;
-}
 
-.response-mode-select .select-menu-options li {
-  min-height: 34px;
-  padding-block: 5px;
-  font-size: 12px;
-}
 
 .composer {
   display: grid;
@@ -3348,4 +3332,138 @@ button:disabled {
 @media (max-width: 420px) {
   .admin-logo { width: 82px; }
   .admin-mode-label { font-size: 13px; }
+}
+
+
+/* ---- アシスタントの設定画面（2026-09-12にタブへ分けた） ---- */
+
+.assistant-form-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-form-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.assistant-form-title h2 { margin: 0; }
+.assistant-form-title p { margin: 2px 0 0; font-size: 13px; }
+
+.assistant-edit-enter {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.assistant-form-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* タブは「いま何を設定しているか」を示すだけなので、選択中だけを強く出す */
+.assistant-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.assistant-tab {
+  flex: none;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.assistant-tab:hover { color: var(--text); }
+
+.assistant-tab.is-active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.assistant-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.assistant-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.assistant-scope-count {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--surface-soft);
+  font-size: 13px;
+}
+
+.assistant-scope-warn { color: #a4392f; }
+
+.glossary-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.glossary-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.glossary-list input {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.glossary-list button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.glossary-list button:hover { background: var(--surface-soft); color: var(--text); }
+
+@media (max-width: 560px) {
+  .assistant-form-head { flex-direction: column; }
+  /* 語と意味を横に並べると、どちらも読めない幅になる */
+  .glossary-list li { grid-template-columns: minmax(0, 1fr) auto; }
+  .glossary-list li input:nth-child(2) { grid-column: 1 / -1; }
 }

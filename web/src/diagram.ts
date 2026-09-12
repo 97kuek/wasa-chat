@@ -51,6 +51,11 @@ function load(): Promise<MermaidAPI | null> {
         // ラベルへHTMLを書かせない。回答本文は生成物なので、図のラベルにも
         // 何が入るか保証できない
         securityLevel: "strict",
+        // **失敗しても画面へ何も描かせない。** Mermaidは既定で、解析に失敗すると
+        // 爆弾の絵と「Syntax error in text」をDOMへ差し込む。差し込み先は本文の
+        // 中ではなく`body`直下なので、**関係ない画面の一番下に居座り続ける**
+        // （2026-09-12に本番のスマホで確認）。描けないときはコードのまま見せる
+        suppressErrorRendering: true,
         theme: "default",
         fontFamily: "inherit",
         flowchart: { htmlLabels: false, useMaxWidth: true },
@@ -82,16 +87,21 @@ export async function renderDiagrams(root: HTMLElement | null): Promise<void> {
 
   for (const figure of pending) {
     const source = figure.dataset.diagram ?? "";
+    const id = `diagram-${++sequence}`;
     // 待っている間に本文が差し替わって、この要素が捨てられていることがある
     if (!figure.isConnected || figure.classList.contains("is-rendered")) continue;
     try {
-      const { svg } = await mermaid.render(`diagram-${++sequence}`, source);
+      const { svg } = await mermaid.render(id, source);
       drawn.set(source, svg);
       paint(figure, svg);
     } catch {
       // 構文が壊れている図。コードブロックのまま残す（エラー文は出さない。
       // 利用者にはどうにもできないうえ、本文の途中に赤い箱が出るほうが邪魔）
       figure.classList.add("is-broken");
+    } finally {
+      // Mermaidは描画用の一時要素を `d` + id で body へ作る。失敗した回だけ
+      // 消し忘れが残るため、成否にかかわらずここで片付ける
+      document.getElementById(`d${id}`)?.remove();
     }
   }
 }
