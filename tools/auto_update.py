@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dotenv import load_dotenv  # noqa: E402
 
 import check_updates  # noqa: E402
+import dump_fee  # noqa: E402
 import dump_site  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -91,9 +92,11 @@ def remote_snapshot() -> dict:
 
     比較の基準を「公開元が返したもの」に統一すれば、母集団が一致する。
 
-    ⚠️ **フライトシミュレータのガイドはここで見ない。** 更新日を返さないサイトなので、
-    変化を見るには32ページを全部取りに行くことになり、確認そのものが重くなる。
-    第三者のソフトの資料で滅多に変わらないため、`--force` と手動の再構築で拾う。
+    ⚠️ **フライトシミュレータのガイドは、一覧ページ1枚しか見ない。**
+    このサイトは `Last-Modified` も `ETag` も返さない（2026-09-12に確認）。
+    中身の変化まで見るには32ページを全部取りに行くことになり、確認そのものが重くなる。
+    一覧ページだけなら1リクエストで済み、**ページの増減は拾える**。
+    既存ページの中身が書き換わった場合は拾えないので、そこは `--force` で取り直す。
     """
     client = check_updates.WikiClient(
         os.environ["WIKI_API"], os.environ["WIKI_USER"], os.environ["WIKI_PASS"]
@@ -105,7 +108,15 @@ def remote_snapshot() -> dict:
     site: dict[str, str] = {}
     for sitemap in dump_site.SITEMAPS:
         site.update(dump_site.sitemap_entries(sitemap))
-    return {"wiki": wiki, "site": site}
+
+    # 一覧に載っているページの顔ぶれだけ。中身の変化は見ていない
+    try:
+        paths = dump_fee.page_paths(dump_fee.fetch(dump_fee.SITE + dump_fee.INDEX_PATH))
+        fee = {path: "" for path in paths}
+    except Exception as error:  # noqa: BLE001 — 第三者サイト。落ちても全体は止めない
+        print(f"ガイドの一覧を取れませんでした（変更なしとして続けます）: {error}")
+        fee = {}
+    return {"wiki": wiki, "site": site, "fee": fee}
 
 
 def source_counts(index: dict) -> Counter:
@@ -119,6 +130,11 @@ def changed_since(previous: dict, snapshot: dict) -> set[str]:
         changed.add("wiki")
     if check_updates.describe_changes("公式サイト", previous.get("site", {}), snapshot["site"]):
         changed.add("site")
+    # 一覧が取れなかったときは比べない（空と比べると全削除に見える）
+    if snapshot.get("fee") and check_updates.describe_changes(
+        "ガイド", previous.get("fee", {}), snapshot["fee"]
+    ):
+        changed.add("fee")
     return changed
 
 
