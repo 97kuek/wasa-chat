@@ -382,7 +382,7 @@ func TestGatherStopsAtRequestLimit(t *testing.T) {
 // **読んだ範囲を先頭に書く。** 会話ログを上流へ送る機能なので、
 // 何が送られたかがチャンネルに残る文言そのもので分かるようにする
 func TestFormatRecapStatesScope(t *testing.T) {
-	got := FormatRecap(RecapScope(7, 42, 3, 1), "決まったこと\n- 日程は8月")
+	got := FormatRecap(RecapScope("このチャンネル", 7, 42, 3), "決まったこと\n- 日程は8月")
 
 	for _, want := range []string{"このチャンネル", "過去7日", "42件", "3人", "引き継ぎ資料は参照していません"} {
 		if !strings.Contains(got, want) {
@@ -395,14 +395,14 @@ func TestFormatRecapStatesScope(t *testing.T) {
 }
 
 func TestRecapScopeNamesCrossChannel(t *testing.T) {
-	got := RecapScope(30, 800, 12, 5)
-	if !strings.Contains(got, "公開チャンネル5件") {
+	got := RecapScope("公開チャンネル5件", 30, 800, 12)
+	if !strings.Contains(got, "公開チャンネル5件") || !strings.Contains(got, "過去30日") {
 		t.Fatalf("横断であることが分からない: %s", got)
 	}
 }
 
 func TestFormatRecapFitsMessageLimit(t *testing.T) {
-	got := FormatRecap(RecapScope(7, 100, 9, 1), strings.Repeat("あ", 5000))
+	got := FormatRecap(RecapScope("このチャンネル", 7, 100, 9), strings.Repeat("あ", 5000))
 	if length := len([]rune(got)); length > MessageLimit {
 		t.Fatalf("上限を超えている: %d文字", length)
 	}

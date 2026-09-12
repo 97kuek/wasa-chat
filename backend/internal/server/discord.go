@@ -35,6 +35,10 @@ const discordBodyLimit = 1 << 20
 // Discordのトークンは15分で失効するので、それより十分手前で諦める。
 const discordAnswerTimeout = 5 * time.Minute
 
+// discordChoicesTimeout は補完の候補を作るまでの上限。
+// Discordは3秒待ってくれるので、その手前で諦めて空の候補を返す。
+const discordChoicesTimeout = 2 * time.Second
+
 func (s *Server) handleDiscord(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.DiscordPublicKey == "" {
 		http.NotFound(w, r)
@@ -70,9 +74,26 @@ func (s *Server) handleDiscord(w http.ResponseWriter, r *http.Request) {
 		s.startDiscordAnswer(&interaction)
 		// **3秒以内に返す。** 実際の回答は後から書き換える
 		writeRaw(w, discord.Deferred())
+	case discord.TypeAutocomplete:
+		// ⚠️ **補完は先延ばしできない。** ここで同期に返す
+		writeRaw(w, s.discordChoices(r.Context(), &interaction))
 	default:
 		writeRaw(w, discord.Pong())
 	}
+}
+
+// discordChoices は「範囲」を打っている最中の候補を返す。
+//
+// 3秒以内に返せないと候補が出ない。上流のDiscordへ問い合わせるのは
+// 1回だけで、しかも1分間は覚えている（discord.ScopeChoices）。
+func (s *Server) discordChoices(ctx context.Context, interaction *discord.Interaction) []byte {
+	name, typed := interaction.Focused()
+	if name != discord.OptionScope || s.cfg.DiscordBotToken == "" {
+		return discord.Autocomplete(nil)
+	}
+	ctx, cancel := context.WithTimeout(ctx, discordChoicesTimeout)
+	defer cancel()
+	return discord.Autocomplete(discord.ScopeChoices(ctx, s.cfg.DiscordBotToken, interaction.GuildID, typed))
 }
 
 // startDiscordAnswer は回答を作って、最初の応答を書き換える。
@@ -89,9 +110,9 @@ func (s *Server) startDiscordAnswer(interaction *discord.Interaction) {
 	target := recapTarget{
 		guildID:   interaction.GuildID,
 		channelID: interaction.ChannelID,
+		scope:     interaction.OptionText(discord.OptionScope),
 		options: discord.Options{
-			Days:        interaction.OptionInt(discord.OptionDays, discord.DefaultDays),
-			AllChannels: interaction.OptionText(discord.OptionScope) == discord.ScopeAllChannels,
+			Days: interaction.OptionInt(discord.OptionDays, discord.DefaultDays),
 		},
 	}
 
@@ -125,10 +146,21 @@ var discordStyle = &state.Assistant{
 	Name: "WASA Chat",
 	Instruction: `Discordのメッセージとして読まれます。次の形式で書いてください。
 
-- 全体を1200文字以内に収める。長い前置きは書かない
+使える記法（Discordが実際に描画します）
+- 見出しは ### だけを使う。# と ## はDiscordでは大きすぎる
+- **太字** で語を強調する。__下線__ も使える
+- 箇条書きは行頭に - 。入れ子は半角スペース2つで字下げする
+- 順番があるものは 1. 2. 3.
+- リンクは [文字](URL) の形にする
+
+使えない記法（そのまま文字として出てしまいます）
 - 表は使わない。項目が複数あるときは箇条書きにする
-- 図（mermaid）は使わない。Discordでは図として表示されず、文字列のまま出る
-- 見出しは使わず、箇条書きと短い段落で構成する`,
+- 図（mermaid）は使わない
+- - [ ] のチェックボックスは使わない
+
+その他
+- 全体を1200文字以内に収める。長い前置きは書かない
+- 節が2つ以上に分かれるときだけ ### を使う。短い回答に見出しは付けない`,
 }
 
 // takeDiscordQuota は利用回数を1回ぶん確保する。
@@ -224,7 +256,35 @@ func (s *Server) answerForDiscord(ctx context.Context, question, userID, usernam
 type recapTarget struct {
 	guildID   string
 	channelID string
-	options   discord.Options
+	// scope は「範囲」オプションの値。空ならこのチャンネル、
+	// discord.ScopeAllChannels なら横断、それ以外はチャンネルID
+	scope string
+	// label は読んだ範囲の呼び名。回答の先頭にそのまま出る
+	label   string
+	options discord.Options
+}
+
+// resolve は「範囲」を、実際に読む対象へ落とす。
+//
+// ⚠️ **候補に出したものだけが選ばれるとは限らない。** 「範囲」は文字列の
+// オプションなので、利用者は候補に無いチャンネルIDを手で打てる。
+// **打ったチャンネル以外を読むときは、公開チャンネルであることを必ず確かめる**
+// （ボットが見えるチャンネルと、打った人が見えるチャンネルは違う）。
+func (t recapTarget) resolve(ctx context.Context, botToken string) (recapTarget, string) {
+	switch {
+	case t.scope == "" || t.scope == t.channelID:
+		t.label = "このチャンネル"
+		return t, ""
+	case t.scope == discord.ScopeAllChannels:
+		t.options.AllChannels = true
+		return t, "" // 読めたチャンネル数が決まってから名前を付ける
+	}
+	channel, ok := discord.PublicChannel(ctx, botToken, t.guildID, t.scope)
+	if !ok {
+		return t, "そのチャンネルは読めません。範囲は候補から選んでください（非公開チャンネルは読みません）。"
+	}
+	t.channelID, t.label = channel.ID, "#"+channel.Name
+	return t, ""
 }
 
 // recapForDiscord はチャンネルの会話を要約する／ToDoを抜き出す。
@@ -237,6 +297,10 @@ func (s *Server) recapForDiscord(ctx context.Context, kind recap.Kind, target re
 	}
 	if target.channelID == "" {
 		return "チャンネルの中で実行してください。"
+	}
+	target, refusal := target.resolve(ctx, s.cfg.DiscordBotToken)
+	if refusal != "" {
+		return refusal
 	}
 
 	// **先に会話ログを取る。** 読めないチャンネルだったときに枠を減らさない
@@ -268,8 +332,12 @@ func (s *Server) recapForDiscord(ctx context.Context, kind recap.Kind, target re
 		log.Printf("Discordの%s生成に失敗（%s）: %v", kind, username, err)
 		return discordLLMError(err)
 	}
-	scope := discord.RecapScope(
-		target.options.Days, discord.CountMessages(logs), discord.CountSpeakers(logs), len(logs))
+	where := target.label
+	if target.options.AllChannels {
+		where = fmt.Sprintf("公開チャンネル%d件", len(logs))
+	}
+	scope := discord.RecapScope(where, target.options.Days,
+		discord.CountMessages(logs), discord.CountSpeakers(logs))
 	return discord.FormatRecap(scope, body)
 }
 

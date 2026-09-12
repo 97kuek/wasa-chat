@@ -91,8 +91,9 @@ func TestFormatAnswerKeepsSources(t *testing.T) {
 	}
 	got := FormatAnswer("荷重試験の申請は？", "新宿で申請します。", sources)
 
+	// 行頭の `- ` でDiscordが実際の箇条書きとして描画する。中点（・）はただの文字
 	for _, want := range []string{"> 荷重試験の申請は？", "新宿で申請します。", "**参照**",
-		"[荷重試験](https://wiki.example/load)", "・構造設計"} {
+		"- [荷重試験](https://wiki.example/load)", "- 構造設計"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("%q が入っていない:\n%s", want, got)
 		}
@@ -220,5 +221,68 @@ func TestStripCitationsKeepsMarkdownLinks(t *testing.T) {
 func TestStripCitationsTrimsTrailingSpace(t *testing.T) {
 	if got := stripCitations("申請します。 [1]\n次の行"); got != "申請します。\n次の行" {
 		t.Fatalf("行末が汚れている: %q", got)
+	}
+}
+
+// ⚠️ **Discordはタスクリストを描画しない。** `- [ ]` は箱ではなく
+// 「[ ]」という文字がそのまま出る。プロンプトでも禁じているが、
+// モデルは慣れた書き方へ戻りやすいのでここでも直す
+func TestFormatRecapFixesCheckboxes(t *testing.T) {
+	got := FormatRecap(RecapScope("このチャンネル", 7, 10, 2),
+		"- [ ] **部員A** / 翼型を決める / 8月まで\n  - [x] 下調べ\n* [ ] **部員B** / 発注")
+
+	if strings.Contains(got, "[ ]") || strings.Contains(got, "[x]") {
+		t.Fatalf("タスクリスト記法が残っている:\n%s", got)
+	}
+	for _, want := range []string{"- ☐ **部員A** / 翼型を決める", "  - ☑ 下調べ", "- ☐ **部員B**"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("%q になっていない:\n%s", want, got)
+		}
+	}
+}
+
+// 補完は25件を超えるとDiscordに弾かれる
+func TestAutocompleteCapsChoices(t *testing.T) {
+	many := make([]Choice, 40)
+	for i := range many {
+		many[i] = Choice{Name: "#班", Value: "id"}
+	}
+	var payload struct {
+		Type int `json:"type"`
+		Data struct {
+			Choices []Choice `json:"choices"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(Autocomplete(many), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Type != ResponseAutocomplete {
+		t.Fatalf("応答の種類が違う: %d", payload.Type)
+	}
+	if len(payload.Data.Choices) != AutocompleteLimit {
+		t.Fatalf("25件に切っていない: %d件", len(payload.Data.Choices))
+	}
+
+	// 候補ゼロでも null ではなく空配列で返す（nullはDiscordに弾かれる）
+	if !strings.Contains(string(Autocomplete(nil)), `"choices":[]`) {
+		t.Fatalf("空の候補が null になっている: %s", Autocomplete(nil))
+	}
+}
+
+// 補完のとき、いまどのオプションを打っているかを拾えること
+func TestFocused(t *testing.T) {
+	var interaction Interaction
+	if err := json.Unmarshal([]byte(`{
+		"type": 4,
+		"data": {"name": "要約", "options": [
+			{"name": "期間", "type": 4, "value": 30},
+			{"name": "範囲", "type": 3, "value": "きた", "focused": true}
+		]}
+	}`), &interaction); err != nil {
+		t.Fatal(err)
+	}
+	name, typed := interaction.Focused()
+	if name != OptionScope || typed != "きた" {
+		t.Fatalf("打っている途中のオプションを拾えない: %q %q", name, typed)
 	}
 }

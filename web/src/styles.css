@@ -1593,9 +1593,11 @@ select:focus-visible {
   border-top-right-radius: 3px;
 }
 
-/* 1行の文字列だった頃の名残で display:flex が残っており、**中身の幅に縮んで**
-   いた。いまはブロックを並べるので、本文と同じ幅いっぱいに広げる（2026-09-13） */
+/* 読んだ節を1行で出す。資料ごとのブロックにすると、資料が4件あるだけで
+   縦に伸びてチャット画面を占有した（2026-09-13の指摘で差し戻し） */
 .answer-reference {
+  display: flex;
+  gap: 6px;
   margin: 12px 0 0;
   color: var(--muted);
   font-size: 12px;
@@ -3492,89 +3494,3 @@ select:focus-visible {
 .answer-feedback-close svg { width: 16px; }
 .answer-feedback-close:hover { background: var(--surface-soft); color: var(--text); }
 
-/* ---- 回答が読んだ資料（資料ごとのブロック） ---- */
-
-.answer-reference-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 6px;
-}
-
-
-.reference-list {
-  display: grid;
-  gap: 6px;
-}
-
-/* 畳んでいても枠を持つ。1行の文字列を並べるより、資料の区切りが先に目に入る */
-.reference-card {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  overflow: hidden;
-}
-
-.reference-card summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.reference-card summary:hover { background: var(--surface-soft); }
-.reference-card summary::-webkit-details-marker { display: none; }
-
-/* 開閉の向きは三角で示す */
-.reference-card summary::before {
-  content: "▸";
-  flex: none;
-  color: var(--muted);
-  font-size: 10px;
-  transition: transform 120ms ease;
-}
-
-.reference-card[open] summary::before { transform: rotate(90deg); }
-.reference-card[open] summary { border-bottom: 1px solid var(--line); }
-
-.reference-title {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-weight: 600;
-}
-
-/* 部外に出せる情報かどうかの判断に要るので、畳んだままでも出所は見せる */
-.reference-origin {
-  flex: none;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--surface-soft);
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.reference-body {
-  display: grid;
-  gap: 6px;
-  padding: 10px 12px 12px;
-  font-size: 13px;
-}
-
-.reference-meta {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.reference-sections {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding-left: 18px;
-  overflow-wrap: anywhere;
-}
-
-.reference-open { justify-self: start; }

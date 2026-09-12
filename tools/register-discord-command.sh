@@ -13,10 +13,16 @@
 #   /要約 [期間] [範囲]  最近の会話を要約する（索引を読まない）
 #   /todo [期間] [範囲]  最近の会話からToDoを抜き出す（同上）
 #
-# 期間は日数（既定7日・最大90日）、範囲は「このチャンネル」（既定）か
-# 「公開チャンネル全部」。**非公開チャンネルは横断の対象にしません。** ボットが
+# 期間は日数（既定7日・最大365日）。範囲は入力中に候補が出ます
+# （「公開チャンネル全部」＋そのサーバーの公開チャンネル。打つと絞られる）。
+#
+# ⚠️ **非公開チャンネルは候補に出さず、IDを手で打たれても読みません。** ボットが
 # 見えるチャンネルと、コマンドを打った人が見えるチャンネルは同じではないためです
 # （docs/09 A-9）。
+#
+# ⚠️ **範囲の補完は autocomplete です。** 固定の choices と違い、打つたびに
+# Cloud Run へ問い合わせが来ます。3秒以内に返せないと候補が出ないため、
+# サーバー側はチャンネル一覧を1分だけ覚えています。
 #
 # ⚠️ **サブコマンドにしていない理由。** Discordは「サブコマンドを持つコマンド」に
 # 普通のオプションを混ぜられない。`/wasa 要約` の形にすると、質問のときも
@@ -66,20 +72,17 @@ curl -fsS -X PUT "https://discord.com/api/v10/${scope}" \
         {
           "type": 4,
           "name": "期間",
-          "description": "何日前まで遡るか（既定7日・最大90日）",
+          "description": "何日前まで遡るか（既定7日・最大365日）",
           "required": false,
           "min_value": 1,
-          "max_value": 90
+          "max_value": 365
         },
         {
           "type": 3,
           "name": "範囲",
-          "description": "既定はこのチャンネルだけ",
+          "description": "チャンネル名を打つと候補が絞られます。既定はこのチャンネル",
           "required": false,
-          "choices": [
-            { "name": "このチャンネル", "value": "channel" },
-            { "name": "公開チャンネル全部", "value": "all" }
-          ]
+          "autocomplete": true
         }
       ]
     },
@@ -90,20 +93,17 @@ curl -fsS -X PUT "https://discord.com/api/v10/${scope}" \
         {
           "type": 4,
           "name": "期間",
-          "description": "何日前まで遡るか（既定7日・最大90日）",
+          "description": "何日前まで遡るか（既定7日・最大365日）",
           "required": false,
           "min_value": 1,
-          "max_value": 90
+          "max_value": 365
         },
         {
           "type": 3,
           "name": "範囲",
-          "description": "既定はこのチャンネルだけ",
+          "description": "チャンネル名を打つと候補が絞られます。既定はこのチャンネル",
           "required": false,
-          "choices": [
-            { "name": "このチャンネル", "value": "channel" },
-            { "name": "公開チャンネル全部", "value": "all" }
-          ]
+          "autocomplete": true
         }
       ]
     }

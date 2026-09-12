@@ -84,7 +84,8 @@ func TestPromptsAvoidUnsupportedFormats(t *testing.T) {
 		if _, err := New(client).Run(t.Context(), kind, "部員A: あ"); err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"表は使わない", "図（mermaid）は使わない", "1000文字以内"} {
+		for _, want := range []string{"表・図（mermaid）・- [ ] のチェックボックスは使わない",
+			"### だけを使う", "1000文字以内"} {
 			if !strings.Contains(client.request.Prompt, want) {
 				t.Fatalf("%s: %q が無い:\n%s", kind, want, client.request.Prompt)
 			}
@@ -97,7 +98,8 @@ func TestTodoAsksForCheckboxes(t *testing.T) {
 	if _, err := New(client).Run(t.Context(), KindTodo, "部員A: 日程を決めておいて"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(client.request.Prompt, "- [ ] 誰が / 何を / いつまでに") {
+	// ⚠️ Discordはタスクリストを描画しない。`- [ ]` ではなく `☐` を使わせる
+	if !strings.Contains(client.request.Prompt, "- ☐ **誰が** / 何を / いつまでに") {
 		t.Fatalf("ToDoの形が指定されていない:\n%s", client.request.Prompt)
 	}
 	if !strings.Contains(client.request.Prompt, "会話に無いタスクを作らない") {

@@ -36,6 +36,9 @@ import (
 const (
 	TypePing               = 1
 	TypeApplicationCommand = 2
+	// TypeAutocomplete は、オプションを打っている最中に候補を求めてくるもの。
+	// **3秒以内に同期で返す。** 「考えています」で先延ばしできない
+	TypeAutocomplete = 4
 )
 
 // 応答の種類。
@@ -44,7 +47,12 @@ const (
 	ResponsePong = 1
 	// ResponseDeferred は「考えています」。3秒の制約をこれで越える
 	ResponseDeferred = 5
+	// ResponseAutocomplete は入力中の候補一覧
+	ResponseAutocomplete = 8
 )
+
+// AutocompleteLimit はDiscordが受け取る候補の最大件数。超えると弾かれる。
+const AutocompleteLimit = 25
 
 // MessageLimit は1メッセージの上限。超えると Discord 側で弾かれる。
 const MessageLimit = 2000
@@ -114,6 +122,8 @@ type Option struct {
 	Name  string          `json:"name"`
 	Type  int             `json:"type"`
 	Value json.RawMessage `json:"value"`
+	// Focused は補完のとき、いまどのオプションを打っているかを示す
+	Focused bool `json:"focused"`
 }
 
 // オプションの型。Discordの Application Command Option Type と対応する。
@@ -156,6 +166,16 @@ func (i *Interaction) OptionText(name string) string {
 		}
 	}
 	return ""
+}
+
+// Focused は補完のとき、打っている最中のオプション名と入力途中の文字を返す。
+func (i *Interaction) Focused() (name, typed string) {
+	for _, option := range i.Data.Options {
+		if option.Focused {
+			return option.Name, option.text()
+		}
+	}
+	return "", ""
 }
 
 // OptionInt は名前を指定して整数オプションを読む。未指定なら fallback。
@@ -208,12 +228,14 @@ func FormatAnswer(question, answer string, sources []Source) string {
 	answer = stripCitations(answer)
 	var tail strings.Builder
 	if len(sources) > 0 {
+		// 行頭の `- ` でDiscordが実際の箇条書きとして描画する。
+		// 中点（・）はただの文字で、字下げも点も付かない
 		tail.WriteString("\n\n**参照**\n")
 		for _, source := range sources {
 			if source.URL != "" {
-				fmt.Fprintf(&tail, "・[%s](%s)\n", source.Title, source.URL)
+				fmt.Fprintf(&tail, "- [%s](%s)\n", source.Title, source.URL)
 			} else {
-				fmt.Fprintf(&tail, "・%s\n", source.Title)
+				fmt.Fprintf(&tail, "- %s\n", source.Title)
 			}
 		}
 	}
@@ -265,7 +287,7 @@ func stripCitations(answer string) string {
 // （docs/09 A-8）。出典は無い（根拠は会話ログそのもの）。
 func FormatRecap(scope, body string) string {
 	head := fmt.Sprintf("-# %s\n\n", scope)
-	text := strings.TrimSpace(body)
+	text := strings.TrimSpace(fixCheckboxes(body))
 	room := MessageLimit - len([]rune(head)) - len([]rune(truncatedMark))
 	if room > 0 && len([]rune(text)) > room {
 		text = string([]rune(text)[:room]) + truncatedMark
@@ -277,11 +299,7 @@ func FormatRecap(scope, body string) string {
 //
 // **どこを何件読んだかを必ず書く。** 会話ログを上流へ送る機能なので、
 // チャンネルに残るこの1行が、そのまま「何が送られたか」の説明になる。
-func RecapScope(days, messages, speakers, channels int) string {
-	where := "このチャンネル"
-	if channels > 1 {
-		where = fmt.Sprintf("公開チャンネル%d件", channels)
-	}
+func RecapScope(where string, days, messages, speakers int) string {
 	return fmt.Sprintf("%sの過去%d日ぶん・%d件の発言（%d人）を読みました。WASAの引き継ぎ資料は参照していません",
 		where, days, messages, speakers)
 }
@@ -293,6 +311,24 @@ const (
 	// ScopeAllChannels は「範囲」オプションでサーバー横断を選んだときの値
 	ScopeAllChannels = "all"
 )
+
+// checkboxPattern は Markdown のタスクリスト記法。
+var checkboxPattern = regexp.MustCompile(`(?m)^(\s*)[-*]\s+\[( |x|X)\]\s*`)
+
+// fixCheckboxes は `- [ ]` を `- ☐` に直す。
+//
+// ⚠️ **Discordはタスクリストを描画しない。** `- [ ]` と書くと、箱ではなく
+// 「[ ]」という文字がそのまま出る（2026-09-13に実機で確認）。プロンプトでも
+// 禁じているが、モデルは慣れた書き方へ戻りやすいので、ここでも直す。
+func fixCheckboxes(body string) string {
+	return checkboxPattern.ReplaceAllStringFunc(body, func(match string) string {
+		indent := match[:len(match)-len(strings.TrimLeft(match, " \t"))]
+		if strings.ContainsAny(match, "xX") {
+			return indent + "- ☑ "
+		}
+		return indent + "- ☐ "
+	})
+}
 
 // FollowUp は「考えています」を書き換えるための中身。
 type FollowUp struct {
@@ -324,5 +360,28 @@ func Deferred() []byte {
 // Pong は疎通確認への応答。
 func Pong() []byte {
 	body, _ := json.Marshal(map[string]any{"type": ResponsePong})
+	return body
+}
+
+// Choice は補完の候補1件。
+type Choice struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// Autocomplete は入力中の候補一覧を返す応答。
+//
+// **25件を超えるとDiscordに弾かれる**ので、ここで必ず切る。
+func Autocomplete(choices []Choice) []byte {
+	if len(choices) > AutocompleteLimit {
+		choices = choices[:AutocompleteLimit]
+	}
+	if choices == nil {
+		choices = []Choice{}
+	}
+	body, _ := json.Marshal(map[string]any{
+		"type": ResponseAutocomplete,
+		"data": map[string]any{"choices": choices},
+	})
 	return body
 }

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/97kuek/wasa-chat/backend/internal/recap"
-
+	"github.com/97kuek/wasa-chat/backend/internal/discord"
 	"github.com/97kuek/wasa-chat/backend/internal/index"
+	"github.com/97kuek/wasa-chat/backend/internal/recap"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
 )
 
@@ -145,5 +145,52 @@ func TestRecapForDiscordNeedsBotToken(t *testing.T) {
 		recapTarget{guildID: "g1", channelID: "c1"}, "u1", "部員A")
 	if !strings.Contains(got, "DISCORD_BOT_TOKEN") {
 		t.Fatalf("設定不足を伝えていない: %s", got)
+	}
+}
+
+// ⚠️ **候補に出したものだけが選ばれるとは限らない。**「範囲」は文字列オプション
+// なので、非公開チャンネルのIDを手で打てる。実行前に必ず確かめること
+func TestRecapTargetResolve(t *testing.T) {
+	srv := &Server{cfg: Config{DiscordBotToken: "token"}}
+	base := recapTarget{guildID: "g1", channelID: "c1"}
+
+	// 指定なし → 打ったチャンネル
+	got, refusal := base.resolve(t.Context(), srv.cfg.DiscordBotToken)
+	if refusal != "" || got.channelID != "c1" || got.label != "このチャンネル" {
+		t.Fatalf("既定がこのチャンネルでない: %+v %q", got, refusal)
+	}
+
+	// 横断
+	all := base
+	all.scope = discord.ScopeAllChannels
+	got, refusal = all.resolve(t.Context(), srv.cfg.DiscordBotToken)
+	if refusal != "" || !got.options.AllChannels {
+		t.Fatalf("横断にならない: %+v %q", got, refusal)
+	}
+
+	// 候補に無いチャンネルID → 断る（公開かどうか確かめられないため）
+	other := base
+	other.scope = "非公開チャンネルのID"
+	if _, refusal := other.resolve(t.Context(), srv.cfg.DiscordBotToken); refusal == "" {
+		t.Fatal("確かめずに読もうとしている")
+	}
+
+	// 打ったチャンネル自身を選んだときは、公開かどうかを問わない
+	self := base
+	self.scope = "c1"
+	if got, refusal := self.resolve(t.Context(), srv.cfg.DiscordBotToken); refusal != "" || got.channelID != "c1" {
+		t.Fatalf("自分のチャンネルを拒んだ: %+v %q", got, refusal)
+	}
+}
+
+// 補完は「範囲」のときだけ返す。3秒以内に同期で返るので、余計な問い合わせをしない
+func TestDiscordChoicesOnlyForScope(t *testing.T) {
+	srv := &Server{cfg: Config{DiscordBotToken: ""}}
+	var interaction discord.Interaction
+	interaction.Data.Options = []discord.Option{
+		{Name: discord.OptionDays, Value: json.RawMessage(`7`), Focused: true},
+	}
+	if got := string(srv.discordChoices(t.Context(), &interaction)); !strings.Contains(got, `"choices":[]`) {
+		t.Fatalf("期間に候補を返している: %s", got)
 	}
 }

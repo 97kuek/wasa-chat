@@ -18,13 +18,17 @@ const pageSize = 100
 // MaxMessages は1回のコマンドで集める発言の総数。
 //
 // **上限は要る。** 何年ぶんでも遡れてしまうと、1回のコマンドで数百リクエストを
-// 投げ、上流へ数十万字を送ることになる。日数での指定（Days）が普通の歯止めで、
-// これは「日数を大きく指定されたとき」の最後の歯止め。
-const MaxMessages = 3000
+// 投げ、上流へ数十万字を送ることになる。日数の指定（Days）を1年まで広げたぶん
+// （2026-09-13）、実質の歯止めはこちらになった。
+//
+// 5000件 × 1件あたり50字程度 = 25万字。recap 側は6万字ごとに分割するので、
+// 分割の上限（6塊）に収まる。
+const MaxMessages = 5000
 
 // MaxRequests は1回のコマンドで投げるDiscordへのリクエスト数の上限。
 // チャンネル横断だと、チャンネル数 × ページ数だけ増える。
-const MaxRequests = 60
+// 120回 × 250ms = 30秒。Discordのトークンは15分もつので間に合う。
+const MaxRequests = 120
 
 // requestInterval はDiscordへの連投を避ける間隔。
 // 1ルート5回/5秒あたりで429が返るため、余裕をもって空ける。
@@ -36,10 +40,13 @@ const defaultAPIBase = "https://discord.com/api/v10"
 
 var apiBase = defaultAPIBase
 
-// MaxDays は遡れる日数の上限。既定は7日。
+// 遡れる日数。既定は7日、上限は1年。
+//
+// 90日から広げた（2026-09-13）。代がまたがる長さを読めるようにするため。
+// 実際に読む量は MaxMessages と MaxRequests が抑える。
 const (
 	DefaultDays = 7
-	MaxDays     = 90
+	MaxDays     = 365
 )
 
 // MessageLengthLimit は1発言あたりの上限。1人の長文でログが埋まるのを防ぐ。
