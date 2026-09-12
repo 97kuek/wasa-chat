@@ -13,6 +13,7 @@ import (
 	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"github.com/97kuek/wasa-chat/backend/internal/llm"
 	"github.com/97kuek/wasa-chat/backend/internal/pipeline"
+	"github.com/97kuek/wasa-chat/backend/internal/recap"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
 )
 
@@ -93,7 +94,7 @@ func TestAskCarriesTR797ContextFromHTTPToAnswerEvidence(t *testing.T) {
 			shared := state.NewMemory()
 			srv := New(
 				Config{SessionSecret: "テスト用の固定鍵テスト用の固定鍵", DailyLimit: 30},
-				live, pipeline.New(live, client), nil, shared,
+				live, pipeline.New(live, client), nil, shared, recap.New(client),
 			)
 			res := httptest.NewRecorder()
 			srv.Routes().ServeHTTP(res, srv.testRequest(http.MethodPost, "/api/ask", tc.body, "評価利用者"))

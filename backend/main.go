@@ -22,6 +22,7 @@ import (
 	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"github.com/97kuek/wasa-chat/backend/internal/llm"
 	"github.com/97kuek/wasa-chat/backend/internal/pipeline"
+	"github.com/97kuek/wasa-chat/backend/internal/recap"
 	"github.com/97kuek/wasa-chat/backend/internal/server"
 	"github.com/97kuek/wasa-chat/backend/internal/sourcecheck"
 	appstate "github.com/97kuek/wasa-chat/backend/internal/state"
@@ -368,6 +369,7 @@ func main() {
 		LLMName:          client.Name(),
 		DiscordPublicKey: os.Getenv("DISCORD_PUBLIC_KEY"),
 		DiscordAppID:     os.Getenv("DISCORD_APP_ID"),
+		DiscordBotToken:  os.Getenv("DISCORD_BOT_TOKEN"),
 		AdminUsers:       admins,
 	}
 	updateChecker := sourcecheck.New(
@@ -384,7 +386,7 @@ func main() {
 	if geminiClient != nil {
 		serverConfig.LLMStatus = geminiClient.RuntimeStatus
 	}
-	srv := server.New(serverConfig, live, pipeline.New(live, client), wiki.New(wikiAPI), sharedState)
+	srv := server.New(serverConfig, live, pipeline.New(live, client), wiki.New(wikiAPI), sharedState, recap.New(client))
 
 	addr := ":" + env("PORT", "8080") // Cloud Run は PORT を渡してくる
 	log.Printf("起動: http://localhost%s", addr)

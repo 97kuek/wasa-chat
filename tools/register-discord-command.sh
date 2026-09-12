@@ -1,15 +1,32 @@
 #!/bin/sh
 #
-# Discord へスラッシュコマンド `/wasa` を登録する。
+# Discord へスラッシュコマンドを登録する。
 #
 #   DISCORD_APP_ID=... DISCORD_BOT_TOKEN=... sh tools/register-discord-command.sh
 #
 # **1回やれば済む。** コマンドの名前や説明を変えたときだけ実行し直す。
 # 回答そのものは Cloud Run が受けるので、このスクリプトは運用に要らない。
 #
-# ⚠️ **BOTトークンはここでしか使わない。** 回答を書き換えるときは、対話ごとの
-# トークン（15分で失効）が認証を兼ねるので、本番にBOTトークンを置く必要はない。
-# 置かなければ漏れない。
+# 登録するのは3つ。
+#
+#   /wasa <質問>        引き継ぎ資料に質問する（索引を読む。出典が付く）
+#   /要約 [期間] [範囲]  最近の会話を要約する（索引を読まない）
+#   /todo [期間] [範囲]  最近の会話からToDoを抜き出す（同上）
+#
+# 期間は日数（既定7日・最大90日）、範囲は「このチャンネル」（既定）か
+# 「公開チャンネル全部」。**非公開チャンネルは横断の対象にしません。** ボットが
+# 見えるチャンネルと、コマンドを打った人が見えるチャンネルは同じではないためです
+# （docs/09 A-9）。
+#
+# ⚠️ **サブコマンドにしていない理由。** Discordは「サブコマンドを持つコマンド」に
+# 普通のオプションを混ぜられない。`/wasa 要約` の形にすると、質問のときも
+# `/wasa 質問 <text>` と打つ必要が出る。**普段の質問を一番短く打てること**を
+# 優先して、別コマンドとして登録する（2026-09-13にPMが判断）。
+#
+# ⚠️ **/要約 と /todo はBOTトークンを本番でも要求する。** 過去ログの取得
+# （GET /channels/{id}/messages）はBOTトークンでしか認証できない。質問だけなら
+# 不要なので、要約を使わない運用なら Cloud Run に DISCORD_BOT_TOKEN を置かなくてよい。
+# 置く場合は Secret Manager 経由にすること（docs/09 A-8）。
 set -eu
 
 : "${DISCORD_APP_ID:?DISCORD_APP_ID を設定してください}"
@@ -25,20 +42,71 @@ else
   echo "登録先: アプリ全体（反映に最大1時間）"
 fi
 
-curl -fsS -X POST "https://discord.com/api/v10/${scope}" \
+# PUT で一括登録する。POST を繰り返すと、名前を変えたときに古いコマンドが残る
+curl -fsS -X PUT "https://discord.com/api/v10/${scope}" \
   -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "wasa",
-    "description": "WASAの引き継ぎ資料に質問します",
-    "options": [
-      {
-        "type": 3,
-        "name": "質問",
-        "description": "例: 荷重試験の申請方法を教えてください",
-        "required": true
-      }
-    ]
-  }'
+  -d '[
+    {
+      "name": "wasa",
+      "description": "WASAの引き継ぎ資料に質問します",
+      "options": [
+        {
+          "type": 3,
+          "name": "質問",
+          "description": "例: 荷重試験の申請方法を教えてください",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "要約",
+      "description": "最近の会話を要約します",
+      "options": [
+        {
+          "type": 4,
+          "name": "期間",
+          "description": "何日前まで遡るか（既定7日・最大90日）",
+          "required": false,
+          "min_value": 1,
+          "max_value": 90
+        },
+        {
+          "type": 3,
+          "name": "範囲",
+          "description": "既定はこのチャンネルだけ",
+          "required": false,
+          "choices": [
+            { "name": "このチャンネル", "value": "channel" },
+            { "name": "公開チャンネル全部", "value": "all" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "todo",
+      "description": "最近の会話からToDoを抜き出します",
+      "options": [
+        {
+          "type": 4,
+          "name": "期間",
+          "description": "何日前まで遡るか（既定7日・最大90日）",
+          "required": false,
+          "min_value": 1,
+          "max_value": 90
+        },
+        {
+          "type": 3,
+          "name": "範囲",
+          "description": "既定はこのチャンネルだけ",
+          "required": false,
+          "choices": [
+            { "name": "このチャンネル", "value": "channel" },
+            { "name": "公開チャンネル全部", "value": "all" }
+          ]
+        }
+      ]
+    }
+  ]' >/dev/null
 echo
-echo "登録しました。Discordで /wasa と打つと出てきます。"
+echo "登録しました。Discordで /wasa /要約 /todo と打つと出てきます。"

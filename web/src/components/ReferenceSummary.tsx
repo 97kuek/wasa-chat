@@ -33,7 +33,6 @@ export function ReferenceSummary({ sources, active = false }: Props) {
       <p className="answer-reference-head">
         <span className="citation-mark" aria-hidden="true" />
         <strong>{active ? "参照中" : "参照"}</strong>
-        <span className="answer-reference-count">{sources.length}件</span>
       </p>
       <div className="reference-list">
         {sources.map((source) => (

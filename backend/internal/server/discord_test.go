@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/97kuek/wasa-chat/backend/internal/recap"
+
 	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
 )
@@ -92,5 +94,56 @@ func TestDiscordClosedWithoutKey(t *testing.T) {
 	srv.Routes().ServeHTTP(res, req)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("鍵が無いのに応答した: %d", res.Code)
+	}
+}
+
+// Discordは表もMermaidの図もレンダリングしない。画面向けの回答をそのまま流すと、
+// 表は等幅でないフォントで崩れ、図はただの文字列になる。
+func TestDiscordStyleAvoidsUnsupportedFormats(t *testing.T) {
+	for _, want := range []string{"表は使わない", "図（mermaid）は使わない", "1200文字以内"} {
+		if !strings.Contains(discordStyle.Instruction, want) {
+			t.Fatalf("%q の指定が無い:\n%s", want, discordStyle.Instruction)
+		}
+	}
+	// **参照範囲は絞らない。** まず全範囲で動かす（2026-09-13にPMが判断）
+	if discordStyle.Origin != "" || discordStyle.Team != "" {
+		t.Fatalf("参照範囲を絞っている: origin=%q team=%q", discordStyle.Origin, discordStyle.Team)
+	}
+}
+
+// `/wasa この会話を要約して` は質問として流さない。会話の内容は索引に無いので
+// 「記載なし」と返ってしまう。**枠を使う前に気づかせる**（送信しないので回数も減らない）
+func TestAnswerForDiscordRedirectsRecapRequests(t *testing.T) {
+	srv := &Server{cfg: Config{DailyLimit: 30}, state: state.NewMemory()}
+
+	cases := []struct{ question, want string }{
+		{"この会話を要約して", "/要約"},
+		{"ここまでのやりとりをまとめて", "/要約"},
+		{"この会話からToDoを作って", "/todo"},
+		{"この会話からタスクを抜き出して", "/todo"},
+	}
+	for _, c := range cases {
+		t.Run(c.question, func(t *testing.T) {
+			got := srv.answerForDiscord(t.Context(), c.question, "u1", "部員A")
+			if !strings.Contains(got, c.want) {
+				t.Fatalf("%s へ案内していない: %s", c.want, got)
+			}
+		})
+	}
+
+	// 資料への質問は素通しする。「会話」を含むだけで奪われては困る
+	used, err := srv.state.Take(t.Context(), "u1", "2026-09-13", 30)
+	if err != nil || !used {
+		t.Fatalf("案内だけで回数を減らしている: %v %v", used, err)
+	}
+}
+
+// 要約系はBOTトークンが要る。未設定なら**枠を使わずに**そう伝える
+func TestRecapForDiscordNeedsBotToken(t *testing.T) {
+	srv := &Server{cfg: Config{DailyLimit: 30}, state: state.NewMemory()}
+	got := srv.recapForDiscord(t.Context(), recap.KindSummary,
+		recapTarget{guildID: "g1", channelID: "c1"}, "u1", "部員A")
+	if !strings.Contains(got, "DISCORD_BOT_TOKEN") {
+		t.Fatalf("設定不足を伝えていない: %s", got)
 	}
 }

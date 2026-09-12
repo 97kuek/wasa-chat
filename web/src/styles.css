@@ -1593,10 +1593,9 @@ select:focus-visible {
   border-top-right-radius: 3px;
 }
 
+/* 1行の文字列だった頃の名残で display:flex が残っており、**中身の幅に縮んで**
+   いた。いまはブロックを並べるので、本文と同じ幅いっぱいに広げる（2026-09-13） */
 .answer-reference {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
   margin: 12px 0 0;
   color: var(--muted);
   font-size: 12px;
@@ -3502,7 +3501,6 @@ select:focus-visible {
   margin: 0 0 6px;
 }
 
-.answer-reference-count { color: var(--muted); font-size: 12px; }
 
 .reference-list {
   display: grid;

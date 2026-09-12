@@ -48,17 +48,29 @@ const (
 // MessageLimit は1メッセージの上限。超えると Discord 側で弾かれる。
 const MessageLimit = 2000
 
+// 登録するコマンド名。tools/register-discord-command.sh と揃えること。
+//
+// ⚠️ **サブコマンドにはしない。** Discordは「サブコマンドを持つコマンド」に
+// 普通のオプションを混ぜられない。`/wasa 要約` の形にすると、質問のときも
+// `/wasa 質問 <text>` と打つ必要が出る。**普段の質問を一番短く打てること**を
+// 優先して、要約とToDoは別のコマンドとして登録する（2026-09-13にPMが判断）。
+const (
+	CommandAsk     = "wasa"
+	CommandSummary = "要約"
+	CommandTodo    = "todo"
+)
+
+// CommandName は呼ばれたコマンドの名前を返す。
+func (i *Interaction) CommandName() string { return i.Data.Name }
+
 type Interaction struct {
 	Type int    `json:"type"`
 	ID   string `json:"id"`
 	// Token は追いかけて書き換えるときに使う。**15分で失効する**
 	Token string `json:"token"`
 	Data  struct {
-		Name    string `json:"name"`
-		Options []struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
-		} `json:"options"`
+		Name    string   `json:"name"`
+		Options []Option `json:"options"`
 	} `json:"data"`
 	// サーバー内では member、DMでは user に入る
 	Member struct {
@@ -91,14 +103,71 @@ func (i *Interaction) Username() string {
 	return i.User.Username
 }
 
+// Option はコマンドへ渡された引数。
+//
+// **Value を string で受けてはいけない。** 整数のオプション（期間の日数）は
+// JSONで `"値": 7` と数値のまま届くので、string で受けると丸ごと解釈に失敗し、
+// **同じリクエストに入っている他のオプションまで消える**。生のまま受けて、
+// 読む側で型を決める。
+type Option struct {
+	Name  string          `json:"name"`
+	Type  int             `json:"type"`
+	Value json.RawMessage `json:"value"`
+}
+
+// オプションの型。Discordの Application Command Option Type と対応する。
+const (
+	OptionTypeString  = 3
+	OptionTypeInteger = 4
+)
+
+func (o Option) text() string {
+	var value string
+	if err := json.Unmarshal(o.Value, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func (o Option) number() (int, bool) {
+	var value int
+	if err := json.Unmarshal(o.Value, &value); err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
 // Question は最初の文字列オプションを返す。
 func (i *Interaction) Question() string {
 	for _, option := range i.Data.Options {
-		if value := strings.TrimSpace(option.Value); value != "" {
+		if value := option.text(); value != "" {
 			return value
 		}
 	}
 	return ""
+}
+
+// OptionText は名前を指定して文字列オプションを読む。未指定なら空文字。
+func (i *Interaction) OptionText(name string) string {
+	for _, option := range i.Data.Options {
+		if option.Name == name {
+			return option.text()
+		}
+	}
+	return ""
+}
+
+// OptionInt は名前を指定して整数オプションを読む。未指定なら fallback。
+func (i *Interaction) OptionInt(name string, fallback int) int {
+	for _, option := range i.Data.Options {
+		if option.Name != name {
+			continue
+		}
+		if value, ok := option.number(); ok {
+			return value
+		}
+	}
+	return fallback
 }
 
 // Verify は Discord の署名を確かめる。
@@ -158,6 +227,42 @@ func FormatAnswer(question, answer string, sources []Source) string {
 }
 
 const truncatedMark = "…（長いため省略しました）"
+
+// FormatRecap は要約・ToDoの本文を組み立てる。
+//
+// **読んだ範囲を先頭に書く。** 会話ログを上流へ送る機能なので、「何が送られたか」が
+// 後から誰にでも分かるようにしておく。チャンネルに残る文言そのものが説明になる
+// （docs/09 A-8）。出典は無い（根拠は会話ログそのもの）。
+func FormatRecap(scope, body string) string {
+	head := fmt.Sprintf("-# %s\n\n", scope)
+	text := strings.TrimSpace(body)
+	room := MessageLimit - len([]rune(head)) - len([]rune(truncatedMark))
+	if room > 0 && len([]rune(text)) > room {
+		text = string([]rune(text)[:room]) + truncatedMark
+	}
+	return head + text
+}
+
+// RecapScope は読んだ範囲の説明文。
+//
+// **どこを何件読んだかを必ず書く。** 会話ログを上流へ送る機能なので、
+// チャンネルに残るこの1行が、そのまま「何が送られたか」の説明になる。
+func RecapScope(days, messages, speakers, channels int) string {
+	where := "このチャンネル"
+	if channels > 1 {
+		where = fmt.Sprintf("公開チャンネル%d件", channels)
+	}
+	return fmt.Sprintf("%sの過去%d日ぶん・%d件の発言（%d人）を読みました。WASAの引き継ぎ資料は参照していません",
+		where, days, messages, speakers)
+}
+
+// オプション名。tools/register-discord-command.sh と揃えること。
+const (
+	OptionDays  = "期間"
+	OptionScope = "範囲"
+	// ScopeAllChannels は「範囲」オプションでサーバー横断を選んだときの値
+	ScopeAllChannels = "all"
+)
 
 // FollowUp は「考えています」を書き換えるための中身。
 type FollowUp struct {

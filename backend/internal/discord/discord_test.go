@@ -3,6 +3,7 @@ package discord
 import (
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -73,10 +74,9 @@ func TestQuestion(t *testing.T) {
 	if got := interaction.Question(); got != "" {
 		t.Fatalf("空のはずが %q", got)
 	}
-	interaction.Data.Options = []struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
-	}{{Name: "質問", Value: "  荷重試験の申請は？  "}}
+	interaction.Data.Options = []Option{
+		{Name: "質問", Type: OptionTypeString, Value: json.RawMessage(`"  荷重試験の申請は？  "`)},
+	}
 	if got := interaction.Question(); got != "荷重試験の申請は？" {
 		t.Fatalf("前後の空白を落としていない: %q", got)
 	}
@@ -135,5 +135,53 @@ func TestFollowUpURL(t *testing.T) {
 	got := FollowUpURL("app123", "token456")
 	if !strings.Contains(got, "/webhooks/app123/token456/messages/@original") {
 		t.Fatalf("書き換え先が違う: %s", got)
+	}
+}
+
+// Discordは表もMermaidもレンダリングしない。画面向けの回答をそのまま流すと、
+// 表は崩れ、図はただの文字列になる。**書き方の指定で避ける。**
+func TestMessageLimitIsDiscordLimit(t *testing.T) {
+	if MessageLimit != 2000 {
+		t.Fatalf("Discordの上限と違う: %d", MessageLimit)
+	}
+}
+
+// **整数のオプションを string で受けてはいけない。** 期間は `"期間": 7` と
+// 数値のまま届くので、string で受けると同じリクエストの他のオプションまで消える
+func TestOptionIntAndText(t *testing.T) {
+	var interaction Interaction
+	if err := json.Unmarshal([]byte(`{
+		"type": 2,
+		"data": {"name": "要約", "options": [
+			{"name": "期間", "type": 4, "value": 30},
+			{"name": "範囲", "type": 3, "value": "all"}
+		]}
+	}`), &interaction); err != nil {
+		t.Fatal(err)
+	}
+	if got := interaction.OptionInt(OptionDays, DefaultDays); got != 30 {
+		t.Fatalf("期間を読めない: %d", got)
+	}
+	if got := interaction.OptionText(OptionScope); got != ScopeAllChannels {
+		t.Fatalf("範囲を読めない: %q", got)
+	}
+	// 未指定なら既定へ落ちる
+	if got := interaction.OptionInt("無い名前", DefaultDays); got != DefaultDays {
+		t.Fatalf("既定へ落ちない: %d", got)
+	}
+	if got := interaction.OptionText("無い名前"); got != "" {
+		t.Fatalf("空にならない: %q", got)
+	}
+}
+
+// 整数オプションが混ざっていても、質問は文字列オプションから拾えること
+func TestQuestionIgnoresNonString(t *testing.T) {
+	var interaction Interaction
+	interaction.Data.Options = []Option{
+		{Name: "期間", Type: OptionTypeInteger, Value: json.RawMessage(`7`)},
+		{Name: "質問", Type: OptionTypeString, Value: json.RawMessage(`"荷重試験は？"`)},
+	}
+	if got := interaction.Question(); got != "荷重試験は？" {
+		t.Fatalf("質問を拾えない: %q", got)
 	}
 }

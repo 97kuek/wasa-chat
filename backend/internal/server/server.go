@@ -25,6 +25,7 @@ import (
 	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"github.com/97kuek/wasa-chat/backend/internal/llm"
 	"github.com/97kuek/wasa-chat/backend/internal/pipeline"
+	"github.com/97kuek/wasa-chat/backend/internal/recap"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
 	"github.com/97kuek/wasa-chat/backend/internal/wiki"
 )
@@ -48,6 +49,10 @@ type Config struct {
 	// Discordのスラッシュコマンド。公開鍵が未設定なら口ごと開かない
 	DiscordPublicKey string
 	DiscordAppID     string
+	// DiscordBotToken は**過去ログの取得にだけ**使う（/要約・/todo）。
+	// 回答の書き換えは対話ごとのトークンで足りるので、これが未設定でも
+	// /wasa は動く。未設定なら要約系だけが「設定されていません」と返す
+	DiscordBotToken string
 	// AdminUsersは画面から外せない主管理者。共同管理者はFirestoreへ保存する。
 	// 設定を復旧口に残し、画面操作だけで管理者がゼロになる事故を防ぐ。
 	AdminUsers []string
@@ -72,12 +77,16 @@ type Server struct {
 	pipe      *pipeline.Pipeline
 	auth      *wiki.Authenticator
 	state     state.Store
+	recap     *recap.Recap
 	startedAt time.Time
 	sourceMu  sync.Mutex
 }
 
-func New(cfg Config, live *index.Live, pipe *pipeline.Pipeline, auth *wiki.Authenticator, shared state.Store) *Server {
-	return &Server{cfg: cfg, live: live, pipe: pipe, auth: auth, state: shared, startedAt: time.Now().UTC()}
+func New(cfg Config, live *index.Live, pipe *pipeline.Pipeline, auth *wiki.Authenticator, shared state.Store, conversations *recap.Recap) *Server {
+	return &Server{
+		cfg: cfg, live: live, pipe: pipe, auth: auth, state: shared,
+		recap: conversations, startedAt: time.Now().UTC(),
+	}
 }
 
 func (s *Server) Routes() http.Handler {
