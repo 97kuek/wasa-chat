@@ -99,7 +99,17 @@ func (s *Server) Routes() http.Handler {
 	// アプリまで届かず404になるため、予約されない /health を使う。
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		pages, chunks := s.live.Current().Stats()
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pages": pages, "chunks": chunks})
+		status := s.live.Status()
+		// **読み直しの失敗を隠さない。** 起動時は索引が読めなければ止めるのに、
+		// 起動後は黙って古いまま動き続ける、という非対称を残さない（docs/09 B-2）。
+		// 外形監視はここを見れば「古い索引で答え続けている」に気づける
+		code := http.StatusOK
+		if status.Failures > 0 {
+			code = http.StatusServiceUnavailable
+		}
+		writeJSON(w, code, map[string]any{
+			"ok": status.Failures == 0, "pages": pages, "chunks": chunks, "index": status,
+		})
 	})
 
 	// SPAを同梱して配る場合（SPA_DIR 指定時）。フロントを Cloudflare Pages に
