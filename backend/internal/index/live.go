@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +38,21 @@ type Live struct {
 	// stamp は「いま読んでいる版」の印。GCSなら世代番号、ファイルなら更新時刻。
 	// **中身を比べない。** 3.4MBを毎回読んで比較すると、確認そのものが重い
 	stamp atomic.Value
+	// 失敗を数える。**無言で古い索引を使い続けないため**（docs/09 B-2）。
+	// 起動時は読めなければ止めるのに、起動後は黙って古いまま動く、という
+	// 非対称を残さない。/health と管理画面へ出す
+	failures  atomic.Int64
+	lastError atomic.Value
+	lastOK    atomic.Value
+	reloadMu  sync.Mutex
+}
+
+// Status は再読み込みの健康状態。管理画面と /health へ出す。
+type Status struct {
+	Stamp     string `json:"stamp"`
+	Failures  int64  `json:"failures"`
+	LastError string `json:"lastError,omitempty"`
+	LastOK    string `json:"lastOk,omitempty"`
 }
 
 // NewLive は読み込み済みの索引から始める。location は Reload の取得元。
@@ -44,7 +60,22 @@ func NewLive(ix *Index, location string) *Live {
 	live := &Live{location: location}
 	live.current.Store(ix)
 	live.stamp.Store("")
+	live.lastError.Store("")
+	live.lastOK.Store("")
+	// **起動直後の版を印として控える。** 空のままだと、最初の確認で
+	// 「変わった」と判断して3.4MBを読み直すことになる（2026-09-12にCodexが指摘）
+	if stamp, err := live.stampOf(context.Background()); err == nil {
+		live.stamp.Store(stamp)
+		live.lastOK.Store(time.Now().UTC().Format(time.RFC3339))
+	}
 	return live
+}
+
+// Status は再読み込みの健康状態を返す。
+func (l *Live) Status() Status {
+	lastError, _ := l.lastError.Load().(string)
+	lastOK, _ := l.lastOK.Load().(string)
+	return Status{Stamp: l.Stamp(), Failures: l.failures.Load(), LastError: lastError, LastOK: lastOK}
 }
 
 // Current はいま使うべき索引を返す。質問の入口で1回だけ呼ぶこと。
@@ -64,22 +95,36 @@ func (l *Live) Stamp() string {
 // **変わっていなければ何も読まない。** 印（GCSの世代 / ファイルの更新時刻）だけを
 // 見るので、確認は1リクエストで済む。
 func (l *Live) Reload(ctx context.Context) (bool, error) {
-	stamp, err := l.stampOf(ctx)
-	if err != nil {
+	// 同時に2つ走ると、遅れて終わった古い読み込みが新しいものを上書きしうる
+	l.reloadMu.Lock()
+	defer l.reloadMu.Unlock()
+
+	fail := func(err error) (bool, error) {
+		l.failures.Add(1)
+		l.lastError.Store(err.Error())
 		return false, err
 	}
+	stamp, err := l.stampOf(ctx)
+	if err != nil {
+		return fail(err)
+	}
 	if stamp != "" && stamp == l.Stamp() {
+		l.failures.Store(0)
+		l.lastOK.Store(time.Now().UTC().Format(time.RFC3339))
 		return false, nil
 	}
 
 	next, err := l.load(ctx)
 	if err != nil {
-		return false, err
+		return fail(err)
 	}
 	// **読めたものだけを差し替える。** 途中で失敗したときに空の索引を載せると、
 	// 全部の質問へ「資料が見つかりません」と答え続ける状態になる
 	l.current.Store(next)
 	l.stamp.Store(stamp)
+	l.failures.Store(0)
+	l.lastError.Store("")
+	l.lastOK.Store(time.Now().UTC().Format(time.RFC3339))
 	return true, nil
 }
 
@@ -135,9 +180,14 @@ func (l *Live) Watch(ctx context.Context, every time.Duration, onChange func(*In
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			changed, err := l.Reload(ctx)
+			// 実行時も上限を切る。起動時だけ30秒で切って実行時は無制限、という
+			// 非対称を残さない（GCSが応答しないと確認が積み上がる）
+			attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+			changed, err := l.Reload(attempt)
+			cancel()
 			if err != nil {
-				log.Printf("索引の更新確認に失敗（いまの索引で続けます）: %v", err)
+				log.Printf("索引の更新確認に失敗（%d回連続。いまの索引で続けます）: %v",
+					l.failures.Load(), err)
 				continue
 			}
 			if !changed {

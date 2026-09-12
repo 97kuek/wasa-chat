@@ -43,7 +43,11 @@ print(f"確認: {len(pages)}ページ / {chunks}チャンク")
 PY
 
 echo "差し替え先: $bucket"
-gcloud storage cp data/index.json data/toc.md "$bucket/"
+# ⚠️ **index.json を最後に上げること。** 本番は index.json の世代だけを見て読み直すので、
+# これが先に変わると「新しい本文＋古い目次」を掴み、しかも新しい世代を記録するため
+# 次の更新まで混ざったままになる（2026-09-12にCodexが指摘）
+gcloud storage cp data/toc.md "$bucket/"
+gcloud storage cp data/index.json "$bucket/"
 
 # 動いているインスタンスは INDEX_WATCH_SECONDS ごとにGCSの世代を見ており、
 # 変わっていれば**再デプロイなしで読み直す**。差し替えたらそれで終わり。

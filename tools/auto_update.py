@@ -177,11 +177,23 @@ def safe_to_publish(before: dict | None, after: dict) -> list[str]:
     if sum(len(page["chunks"]) for page in pages) == 0:
         problems.append("チャンクが1つもありません")
 
+    # **ページ数が同じでも、本文を失っていることがある。**
+    # 取得が「空の本文」で成功してしまう経路があるため、総量でも見る
+    if before:
+        old_chars = sum(page.get("chars", 0) for page in before["pages"])
+        new_chars = sum(page.get("chars", 0) for page in pages)
+        if old_chars and new_chars <= old_chars * (1 - MAX_SHRINK):
+            problems.append(f"本文の総量が {old_chars:,} → {new_chars:,} 字へ減りました")
+        old_chunks = sum(len(page["chunks"]) for page in before["pages"])
+        new_chunks = sum(len(page["chunks"]) for page in pages)
+        if old_chunks and new_chunks <= old_chunks * (1 - MAX_SHRINK):
+            problems.append(f"チャンク数が {old_chunks} → {new_chunks} へ減りました")
+
     if before:
         old, new = source_counts(before), source_counts(after)
         for source, old_count in old.items():
             new_count = new.get(source, 0)
-            if old_count and new_count < old_count * (1 - MAX_SHRINK):
+            if old_count and new_count <= old_count * (1 - MAX_SHRINK):
                 problems.append(
                     f"{source} のページ数が {old_count} → {new_count} へ"
                     f"{int((1 - new_count / old_count) * 100)}%減りました"
@@ -217,7 +229,11 @@ def publish(location: str) -> None:
     bucket_name, _, prefix = location.removeprefix("gs://").partition("/")
     bucket = storage.Client().bucket(bucket_name)
     prefix = prefix.strip("/")
-    for path in (INDEX, TOC, MANIFEST):
+    # ⚠️ **index.json を最後に上げること。** 本番は index.json の世代だけを見て
+    # 読み直すので、これが先に変わると「新しい本文＋古い目次」を掴み、しかも
+    # 新しい世代を記録するため**次の更新まで混ざったまま**になる。
+    # index.json を最後に置けば、目次は必ず先に揃っている（2026-09-12にCodexが指摘）。
+    for path in (TOC, MANIFEST, INDEX):
         name = f"{prefix}/{path.name}" if prefix else path.name
         bucket.blob(name).upload_from_filename(path)
         print(f"差し替え: gs://{bucket_name}/{name}")

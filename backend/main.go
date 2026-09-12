@@ -304,7 +304,15 @@ func main() {
 	// 3.4MBは読まない。min-instances=0 なので使われていない間はこのループごと
 	// 止まるが、次のアクセスで起動したインスタンスは最新を読むため取りこぼさない。
 	live := index.NewLive(ix, source)
-	if every := time.Duration(envInt("INDEX_WATCH_SECONDS", 60)) * time.Second; every > 0 {
+	// envInt は正の値しか受けないので、無効化は別に読む。
+	// 0 を渡せないと、止めたいときに止められない（2026-09-12にCodexが指摘）
+	watchSeconds := 60
+	if raw := os.Getenv("INDEX_WATCH_SECONDS"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			watchSeconds = parsed
+		}
+	}
+	if every := time.Duration(watchSeconds) * time.Second; every > 0 {
 		go live.Watch(context.Background(), every, nil)
 		log.Printf("索引の更新確認: %v ごと（%s）", every, source)
 	} else {

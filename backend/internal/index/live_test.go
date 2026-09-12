@@ -35,13 +35,13 @@ func TestLiveReloadPicksUpNewIndex(t *testing.T) {
 	}
 	live := NewLive(first, dir)
 
-	// 1回目は印を持っていないので必ず読み直す
-	if changed, err := live.Reload(context.Background()); err != nil || !changed {
-		t.Fatalf("最初の確認で読み直していない: changed=%v err=%v", changed, err)
-	}
-	// 変わっていなければ読まない
+	// **起動直後は読み直さない。** NewLive が版を控えるので、変わっていなければ
+	// 3.4MBを読むことはない（2026-09-12にCodexが指摘）
 	if changed, err := live.Reload(context.Background()); err != nil || changed {
-		t.Fatalf("変わっていないのに読み直した: changed=%v err=%v", changed, err)
+		t.Fatalf("起動直後に読み直した: changed=%v err=%v", changed, err)
+	}
+	if status := live.Status(); status.Failures != 0 || status.Stamp == "" {
+		t.Fatalf("起動直後の状態がおかしい: %+v", status)
 	}
 
 	// 更新時刻で判定するため、同一秒内の書き換えを避ける
@@ -70,5 +70,11 @@ func TestLiveKeepsIndexWhenReloadFails(t *testing.T) {
 	}
 	if live.Current() != ix {
 		t.Fatal("読み込みに失敗したのに索引を差し替えた")
+	}
+	// **失敗を隠さない。** 起動時は読めなければ止めるのに、起動後は黙って古いまま
+	// 動き続ける、という非対称を残さない（docs/09 B-2）
+	status := live.Status()
+	if status.Failures == 0 || status.LastError == "" {
+		t.Fatalf("失敗が記録されていない: %+v", status)
 	}
 }
