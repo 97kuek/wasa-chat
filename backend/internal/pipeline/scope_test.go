@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/97kuek/wasa-chat/backend/internal/index"
@@ -40,6 +41,46 @@ func TestInScope(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := inScope(c.page, c.assistant); got != c.want {
 				t.Errorf("inScope() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// 保険の経路（fallbackPages）だけ規則が緩んでいた。
+//
+// ほかの候補は add() を通るので questionAllowsOrigin が効くが、fallbackPages の
+// 結果はそのまま使われるため、抜けていると「公式サイトに載っていますか」に
+// 引き継ぎWikiのページを返せてしまう（2026-09-12に発見）。
+// **救済経路だけ緩む形を残さない。**
+func TestFallbackPagesKeepsOriginFilter(t *testing.T) {
+	ix := &index.Index{Pages: []index.Page{
+		{Title: "作業場情報", Source: "wiki", Chunks: []index.Chunk{{ID: "p1-c1", Breadcrumb: "作業場情報 > 家賃"}}},
+		{Title: "作業場のしょうかい", Source: "site", Chunks: []index.Chunk{{ID: "p2-c1", Breadcrumb: "作業場のしょうかい > 家賃"}}},
+	}}
+	p := New(ix, nil)
+
+	cases := []struct {
+		name     string
+		question string
+		want     []string
+	}{
+		{"出所を指定しなければ両方出る", "作業場の家賃は？", []string{"作業場情報", "作業場のしょうかい"}},
+		{"公式サイトを指定したらWikiは出さない", "公式サイトに作業場の家賃はありますか", []string{"作業場のしょうかい"}},
+		{"Wikiを指定したら公式サイトは出さない", "Wikiに作業場の家賃はありますか", []string{"作業場情報"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got []string
+			for _, pg := range p.fallbackPages(c.question, nil) {
+				got = append(got, pg.Title)
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("%v が返った。想定は %v", got, c.want)
+			}
+			for _, want := range c.want {
+				if !slices.Contains(got, want) {
+					t.Fatalf("%v に %q が無い", got, want)
+				}
 			}
 		})
 	}

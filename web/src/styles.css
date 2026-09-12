@@ -3371,27 +3371,33 @@ button:disabled {
 
 
 
-/* 設定は1画面に並べ、画面の広さに応じて段を増やす。
-   `align-items: start` が無いと、短い節が隣の高い節に合わせて間延びする */
+/* 設定は1画面に並べる。
+   **枠で囲まない。** 4つの節を箱にして横へ並べたら、高さの違う小さな箱が
+   散らばって読みにくくなった（2026-09-12の報告）。見出しと余白だけで区切る。
+   段は1か2まで。auto-fitで4段まで増やすと、1項目ずつが細長い列になる */
 .assistant-sections {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 16px;
+  gap: 30px 44px;
+}
+
+@media (min-width: 1000px) {
+  .assistant-sections { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .assistant-section {
   display: grid;
   gap: 12px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
 }
 
 .assistant-section h3 {
   margin: 0;
-  font-size: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.02em;
 }
 
 .assistant-panel {

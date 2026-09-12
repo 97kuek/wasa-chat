@@ -207,10 +207,13 @@ class Pipeline:
 
         # 型番一致と質問中の実在タイトルは最大2件まで決定的に残し、
         # 質問全体を見るLLMにも必ず2枠を残す。
-        resolved, dropped = self.deterministic_pages(search_question), []
+        # Go の add() と同じく、**候補は必ず参照範囲と出所の判定を通す**
+        allowed = lambda title: self.question_allows_origin(search_question, title)
+        resolved = [t for t in self.deterministic_pages(search_question) if allowed(t)]
+        dropped: list[str] = []
         for raw in titles:
             hit = self.resolve(raw)
-            if hit and hit not in resolved and len(resolved) < MAX_PAGES:
+            if hit and hit not in resolved and allowed(hit) and len(resolved) < MAX_PAGES:
                 resolved.append(hit)
             elif not hit:
                 dropped.append(raw)
@@ -461,6 +464,30 @@ class Pipeline:
 {question}
 """
 
+    def question_allows_origin(self, question: str, title: str) -> bool:
+        """「WASA Wikiにあるか」のように出所を明記した質問で、別の出所を混ぜない。
+
+        Go側 pipeline.questionAllowsOrigin と同じ判定にすること。
+        **測定側にこれが無いと、出所を名指しした設問（q15など）で本番と違う
+        ページを選び、その数字が本番を説明しなくなる**（2026-09-12に追加）。
+        """
+        lower = question.lower()
+        wants_wiki = "wiki" in lower or "引き継ぎ資料" in question
+        wants_site = "公式サイト" in question
+        # フライトシミュレータは別ソフトの資料なので、名指しされたらそこだけに絞る
+        wants_fee = ("シミュレータ" in question or "シミュレーター" in question
+                     or "flightgear" in lower or "fee" in lower or "flightenvironment" in lower)
+        source = self.pages[title].get("source") or "wiki"
+        if wants_fee and not wants_wiki and not wants_site:
+            return source == "fee"
+        if source == "fee":
+            return wants_fee
+        if wants_wiki and not wants_site:
+            return source != "site"
+        if wants_site and not wants_wiki:
+            return source == "site"
+        return True
+
     def fallback_pages(self, question: str) -> list[str]:
         """LLMがページを1件も返せなかったときの保険。
 
@@ -471,6 +498,10 @@ class Pipeline:
         scores: list[tuple[int, str]] = []
         grams = {question[i : i + 2] for i in range(len(question) - 1)}
         for title, page in self.pages.items():
+            # **救済経路でも出所の指定は効かせる。** ここだけ緩めると、
+            # 「公式サイトに載っていますか」に引き継ぎWikiを返せてしまう
+            if not self.question_allows_origin(question, title):
+                continue
             hay = title + " " + " ".join(page["headings"]) + " " + page["lead"][:200]
             scores.append((sum(1 for g in grams if g in hay), title))
         scores.sort(reverse=True)

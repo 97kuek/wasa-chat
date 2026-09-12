@@ -800,8 +800,13 @@ func (p *Pipeline) fallbackPages(question string, a *state.Assistant) []*index.P
 	for i := range p.ix.Pages {
 		pg := &p.ix.Pages[i]
 		// 保険の経路でも範囲外は出さない。ここを抜かすと、絞り込みが
-		// 「たいていは効く」だけの頼れない機能になる
-		if len(pg.Chunks) == 0 || !inScope(pg, a) {
+		// 「たいていは効く」だけの頼れない機能になる。
+		//
+		// **出所の絞り込みも同じ。** ほかの候補は add() を通るので
+		// questionAllowsOrigin が効くが、ここだけは結果をそのまま使うため、
+		// 抜けていると「公式サイトに載っていますか」に引き継ぎWikiを返せてしまった
+		// （2026-09-12に発見）。救済経路だけ規則が緩む形を残さない。
+		if len(pg.Chunks) == 0 || !inScope(pg, a) || !questionAllowsOrigin(question, pg) {
 			continue
 		}
 		hay := pg.Title

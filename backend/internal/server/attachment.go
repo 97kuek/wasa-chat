@@ -14,8 +14,8 @@ import (
 // 画面側は長辺768pxのJPEGへ落としてから送るが、**その申告は信じない。**
 // 上限も形式も、届いたバイト列を見てサーバーが決める。
 const (
-	maxAttachments    = 1                // 当面1枚。複数枚の使い道が実際に出てから増やす
-	maxAttachmentSize = 400 * 1024       // 縮小後のJPEGは実測で100KB前後に収まる
+	maxAttachments    = 1          // 当面1枚。複数枚の使い道が実際に出てから増やす
+	maxAttachmentSize = 400 * 1024 // 縮小後のJPEGは実測で100KB前後に収まる
 	dataURIPrefix     = "data:"
 )
 
