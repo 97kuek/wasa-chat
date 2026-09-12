@@ -12,7 +12,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -340,4 +340,19 @@ test("先頭行が図の宣言でなければコードブロックのままに�
 test("別の言語名が付いていれば図にしない", () => {
   const html = renderWithin("```bash\ngraph LR\n```");
   assert.doesNotMatch(html, /<figure/);
+});
+
+// 図は本来の大きさで描く。以前は幅を100%に伸ばしており、`flowchart TD` のような
+// 縦長の図でノード1個が画面いっぱいになっていた（2026-09-12に本番で確認）。
+test("図は本来の大きさで描き、はみ出すぶんは枠の中でスクロールさせる", () => {
+  const diagram = readFileSync(new URL("../src/diagram.ts", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  // viewBoxの寸法を本来の大きさとして採り、高さの属性は外す（縦横比が崩れるため）
+  assert.match(diagram, /getAttribute\("viewBox"\)/);
+  assert.match(diagram, /element\.style\.width = `\$\{Number\(box\[2\]\)\}px`/);
+  assert.match(diagram, /removeAttribute\("height"\)/);
+  // 縦も横も枠の中でスクロールする。高さを止めないと図だけで画面が埋まる
+  assert.match(styles, /\.diagram-view\s*\{[^}]*overflow:\s*auto/s);
+  assert.match(styles, /\.diagram-view\s*\{[^}]*max-height:\s*min\(70vh, 560px\)/s);
+  assert.doesNotMatch(styles, /\.diagram-view svg\s*\{[^}]*width:\s*calc/s);
 });

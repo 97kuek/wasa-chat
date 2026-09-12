@@ -1693,22 +1693,29 @@ button:disabled {
 .diagram:not(.is-rendered) .figure-toolbar { display: none; }
 .diagram .diagram-code { margin: 0; }
 
+/* 図は本来の大きさで描き、収まらないぶんは**枠の中で**スクロールさせる。
+   縦長の図（flowchart TD）は本文より長くなることがあり、高さを制限しないと
+   図だけで画面が埋まって前後の文章が読めなくなる（2026-09-12に本番で確認） */
 .diagram-view {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: min(70vh, 560px);
   text-align: center;
+  overscroll-behavior: contain;
 }
 
-/* 拡大は幅で行う。transformだと高さが変わらず、下の本文と重なる */
+/* 拡大は zoom で行う。transform だと場所だけ動いて枠の大きさが変わらず、
+   スクロールできる範囲が広がらない */
 .diagram-view svg {
-  width: calc(var(--diagram-zoom, 1) * 100%);
+  max-width: 100%;
   height: auto;
+  zoom: var(--diagram-zoom, 1);
 }
 
-/* スマホでは幅に合わせると文字が6px前後になり読めない（2026-09-12に390px幅で確認）。
-   最低限の大きさを保ち、収まらないぶんは表と同じく横スクロールで見せる */
 @media (max-width: 560px) {
   .diagram { padding: 42px 10px 10px; }
-  .diagram-view svg { min-width: 480px; }
+  /* 幅に合わせて縮めると文字が6px前後になり読めない（2026-09-12に390px幅で確認）。
+     スマホでは縮めず、横スクロールで見せる */
+  .diagram-view svg { max-width: none; }
 }
 
 .table-scroll {

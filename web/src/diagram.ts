@@ -100,9 +100,24 @@ function paint(figure: HTMLElement, svg: string): void {
   const view = figure.querySelector<HTMLElement>(".diagram-view");
   if (!view) return;
   view.innerHTML = svg;
-  // Mermaidはsvgへ `max-width` を直接書く。インラインのほうが強いので、
-  // 拡大してもそこで頭打ちになる。拡大縮小はCSS側に任せたいので外す
-  view.querySelector("svg")?.style.removeProperty("max-width");
+  const element = view.querySelector("svg");
+  if (element) {
+    // Mermaidはsvgへ `max-width` を直接書く。インラインのほうが強いので、
+    // 拡大してもそこで頭打ちになる。拡大縮小はCSS側に任せたいので外す
+    element.style.removeProperty("max-width");
+    // **本来の大きさをpxで固定する。**
+    //
+    // 以前はCSSで幅を100%にしていたが、`flowchart TD` のような縦長の図では
+    // 横幅に合わせて引き伸ばされ、ノード1個が画面いっぱいになっていた
+    // （2026-09-12に本番で確認）。viewBoxの寸法がその図の本来の大きさなので、
+    // それを基準にし、収まらないぶんは枠の中でスクロールさせる。
+    const box = element.getAttribute("viewBox")?.split(/[\s,]+/);
+    if (box?.length === 4 && Number(box[2]) > 0) {
+      element.style.width = `${Number(box[2])}px`;
+      element.style.height = "auto";
+      element.removeAttribute("height"); // 属性が残ると縦横比が崩れる
+    }
+  }
   figure.classList.add("is-rendered");
 }
 
