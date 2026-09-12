@@ -1,0 +1,28 @@
+# 資料の自動更新を回す Cloud Run Job のイメージ。
+#
+# 本体（Dockerfile）とは別にしてある。**アプリの実行イメージへPythonを混ぜない。**
+# 本体は distroless の静的バイナリで20MB程度に収まっており、そこへ取得用の
+# Python一式を入れると、質問を受けるだけのコンテナが数百MBになる。
+#
+# ⚠️ **外部のCIサービスは使わない**（docs/07）。非公開Wikiの資格情報と取得データを
+# 外へ置かないためで、この判断は変えていない。自動化は既存のGoogle Cloudの中
+# （Cloud Run Job）で完結させる。
+#
+#   docker buildx build --platform linux/amd64 -f Dockerfile.updater -t $IMAGE .
+#   gcloud run jobs deploy wasa-chat-updater --image $IMAGE ...
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 取得と索引作成に要るものだけ。評価スクリプトの依存は入れない
+RUN pip install --no-cache-dir requests python-dotenv google-cloud-storage
+
+# 取得・索引作成に必要なものだけを入れる。web/ や backend/ は要らない
+COPY dump_wiki.py dump_site.py dump_fee.py build_index.py build_toc.py \
+     check_updates.py facts.md ./
+COPY tools/auto_update.py ./tools/
+
+# dump と data は実行時に作る。イメージには資料を焼き込まない
+RUN mkdir -p dump data
+
+ENTRYPOINT ["python", "-u", "tools/auto_update.py"]

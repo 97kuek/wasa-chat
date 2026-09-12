@@ -3493,42 +3493,67 @@ select:focus-visible {
 .answer-feedback-close svg { width: 16px; }
 .answer-feedback-close:hover { background: var(--surface-soft); color: var(--text); }
 
-/* ---- 回答が読んだ資料（資料ごとに畳む） ---- */
+/* ---- 回答が読んだ資料（資料ごとのブロック） ---- */
+
+.answer-reference-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+.answer-reference-count { color: var(--muted); font-size: 12px; }
 
 .reference-list {
   display: grid;
-  gap: 2px;
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
+  gap: 6px;
 }
 
-.reference-list summary {
+/* 畳んでいても枠を持つ。1行の文字列を並べるより、資料の区切りが先に目に入る */
+.reference-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.reference-card summary {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
-  border-radius: 7px;
-  color: var(--muted);
+  padding: 9px 12px;
   font-size: 13px;
   cursor: pointer;
 }
 
-.reference-list summary:hover { background: var(--surface-soft); color: var(--text); }
-.reference-list summary::-webkit-details-marker { display: none; }
+.reference-card summary:hover { background: var(--surface-soft); }
+.reference-card summary::-webkit-details-marker { display: none; }
 
-/* 開閉の向きは三角で示す。畳んである資料が何件あるかは見出し側に出す */
-.reference-list summary::before {
+/* 開閉の向きは三角で示す */
+.reference-card summary::before {
   content: "▸";
+  flex: none;
+  color: var(--muted);
   font-size: 10px;
   transition: transform 120ms ease;
 }
 
-.reference-list details[open] summary::before { transform: rotate(90deg); }
-.reference-title { overflow-wrap: anywhere; }
+.reference-card[open] summary::before { transform: rotate(90deg); }
+.reference-card[open] summary { border-bottom: 1px solid var(--line); }
 
-.reference-sections-count {
+.reference-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+/* 部外に出せる情報かどうかの判断に要るので、畳んだままでも出所は見せる */
+.reference-origin {
   flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-soft);
   color: var(--muted);
   font-size: 11px;
 }
@@ -3536,23 +3561,22 @@ select:focus-visible {
 .reference-body {
   display: grid;
   gap: 6px;
-  padding: 2px 8px 8px 22px;
+  padding: 10px 12px 12px;
   font-size: 13px;
+}
+
+.reference-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .reference-sections {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   margin: 0;
-  padding-left: 16px;
-  color: var(--muted);
+  padding-left: 18px;
+  overflow-wrap: anywhere;
 }
 
-.answer-reference-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-}
-
-.answer-reference-count { color: var(--muted); font-size: 12px; }
+.reference-open { justify-self: start; }
