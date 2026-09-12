@@ -115,10 +115,38 @@ func (f *Firestore) SaveUserProfile(ctx context.Context, key, username string, a
 		} else if status.Code(err) != codes.NotFound {
 			return err
 		}
+		// 利用者画像は別の操作で更新するため、ログインやセッション確認のたびに
+		// プロフィール全体を上書きして画像を消さない。
 		return tx.Set(ref, map[string]any{
 			"username": username, "first_seen": firstSeen, "last_seen": at,
-		})
+		}, firestore.MergeAll)
 	})
+}
+
+func (f *Firestore) GetUserProfile(ctx context.Context, key string) (UserProfile, bool, error) {
+	snapshot, err := f.client.Collection("users").Doc(key).Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		return UserProfile{}, false, nil
+	}
+	if err != nil {
+		return UserProfile{}, false, err
+	}
+	var profile UserProfile
+	if err := snapshot.DataTo(&profile); err != nil {
+		return UserProfile{}, false, err
+	}
+	profile.Key = snapshot.Ref.ID
+	return profile, true, nil
+}
+
+func (f *Firestore) SaveUserIcon(ctx context.Context, key, icon string) error {
+	ref := f.client.Collection("users").Doc(key)
+	if icon == "" {
+		_, err := ref.Update(ctx, []firestore.Update{{Path: "icon", Value: firestore.Delete}})
+		return err
+	}
+	_, err := ref.Update(ctx, []firestore.Update{{Path: "icon", Value: icon}})
+	return err
 }
 
 func (f *Firestore) ListUserProfiles(ctx context.Context) ([]UserProfile, error) {

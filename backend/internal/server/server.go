@@ -82,6 +82,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/session", s.handleSession)
+	mux.HandleFunc("PUT /api/profile/icon", s.requireAuth(s.handleUpdateProfileIcon))
 	mux.HandleFunc("POST /api/ask", s.requireAuth(s.handleAsk))
 	mux.HandleFunc("GET /api/chats", s.requireAuth(s.handleListChats))
 	mux.HandleFunc("PUT /api/chats/{id}", s.requireAuth(s.handleSaveChat))
@@ -208,6 +209,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.currentUser(r)
 	remaining := 0
+	icon := ""
 	if ok {
 		// デプロイ前から有効なCookieを持つ利用者も、次に画面を開いた時点で
 		// 管理用プロフィールへ載せる。質問・回答はここへ保存しない。
@@ -221,9 +223,16 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "利用回数を読み込めませんでした"})
 			return
 		}
+		profile, exists, err := s.state.GetUserProfile(r.Context(), s.userKey(user))
+		if err != nil {
+			// 画像は見た目だけの情報なので、読めなくてもログインと質問は止めない。
+			log.Printf("利用者画像の読み込みに失敗: %v", err)
+		} else if exists {
+			icon = profile.Icon
+		}
 	}
 	writeJSON(w, http.StatusOK,
-		map[string]any{"authenticated": ok, "username": user, "remaining": remaining, "admin": ok && s.isAdmin(r.Context(), user)})
+		map[string]any{"authenticated": ok, "username": user, "icon": icon, "remaining": remaining, "admin": ok && s.isAdmin(r.Context(), user)})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, _ *http.Request) {

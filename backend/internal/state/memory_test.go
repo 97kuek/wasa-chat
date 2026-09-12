@@ -59,6 +59,37 @@ func TestMemoryAdminDataKeepsNamesSeparateFromUsageAndExpires(t *testing.T) {
 	}
 }
 
+func TestMemoryUserProfileKeepsAndRemovesOwnIcon(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	if err := store.SaveUserProfile(ctx, "hmac-key", "42 Wasa Taro", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveUserIcon(ctx, "hmac-key", "data:image/png;base64,AA=="); err != nil {
+		t.Fatal(err)
+	}
+	profile, ok, err := store.GetUserProfile(ctx, "hmac-key")
+	if err != nil || !ok || profile.Icon == "" {
+		t.Fatalf("利用者画像を読み戻せない: ok=%v err=%v profile=%+v", ok, err, profile)
+	}
+	// ログインのたびに名前と最終利用を更新しても、本人が設定した画像は消さない。
+	if err := store.SaveUserProfile(ctx, "hmac-key", "42 Wasa Taro", now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	profile, _, _ = store.GetUserProfile(ctx, "hmac-key")
+	if profile.Icon == "" {
+		t.Fatal("プロフィール更新で利用者画像が消えた")
+	}
+	if err := store.SaveUserIcon(ctx, "hmac-key", ""); err != nil {
+		t.Fatal(err)
+	}
+	profile, _, _ = store.GetUserProfile(ctx, "hmac-key")
+	if profile.Icon != "" {
+		t.Fatal("利用者画像を外せていない")
+	}
+}
+
 func TestMemoryCountsActualAPIRequestsAndPurgesAuditLogs(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()

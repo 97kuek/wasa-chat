@@ -73,7 +73,7 @@ export type Event =
   | { type: "done" }
   | { type: "error"; message: string; code?: "daily_quota" | "rate_limit" | "user_daily_limit" | "unavailable"; retry_at?: string };
 
-export type Session = { authenticated: boolean; username: string; remaining: number; admin: boolean };
+export type Session = { authenticated: boolean; username: string; icon?: string; remaining: number; admin: boolean };
 
 /**
  * Wikiのアカウントでログインする。
@@ -102,6 +102,18 @@ export async function session(): Promise<Session> {
   const res = await fetch(`${API_ORIGIN}/api/session`, { credentials: "include" });
   if (!res.ok) return { authenticated: false, username: "", remaining: 0, admin: false };
   return res.json();
+}
+
+export async function updateProfileIcon(icon: string): Promise<string> {
+  const res = await fetch(`${API_ORIGIN}/api/profile/icon`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ icon }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "利用者画像を保存できませんでした");
+  return typeof body.icon === "string" ? body.icon : "";
 }
 
 export type FeedbackReason =

@@ -15,6 +15,7 @@ import { useToast } from "../hooks/useToast";
 
 type Props = {
   username: string;
+  profileIcon: string;
   onBack: () => void;
   onLogout: () => void;
 };
@@ -139,7 +140,7 @@ function nextUpdateAction(stage: AdminOverview["updateProgress"]["stage"]): stri
   }
 }
 
-export function AdminPage({ username, onBack, onLogout }: Props) {
+export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [roleBusy, setRoleBusy] = useState("");
@@ -334,7 +335,9 @@ export function AdminPage({ username, onBack, onLogout }: Props) {
               aria-controls="admin-profile-popover"
               onClick={() => setProfileOpen((open) => !open)}
             >
-              {Array.from(username)[0] ?? "W"}
+              {profileIcon
+                ? <img src={profileIcon} alt="" />
+                : Array.from(username)[0] ?? "W"}
             </button>
             {profileOpen && (
               <section className="header-popover profile-popover" id="admin-profile-popover" aria-label="利用者メニュー">

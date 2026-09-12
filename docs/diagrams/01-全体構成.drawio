@@ -1,72 +1,117 @@
 <mxfile host="app.diagrams.net" agent="WASA Chat" version="24.0.0">
   <diagram name="全体構成" id="wasa-overview">
-    <mxGraphModel dx="1100" dy="760" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="760" math="0" shadow="0">
+    <mxGraphModel dx="1140" dy="760" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1140" pageHeight="720" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
-        <mxCell id="title" value="WASA Chat 全体構成" style="text;html=1;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="40" y="25" width="500" height="30" as="geometry" />
+        <mxCell id="title" value="WASA Chat 全体構成（通常の利用）" style="text;html=1;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="30" width="560" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="subtitle" value="通常の通信と資料更新だけを示す。認証・RAGの詳細は専用図へ分ける。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="1">
-          <mxGeometry x="40" y="58" width="800" height="24" as="geometry" />
-        </mxCell>
-
-        <mxCell id="runtime-title" value="通常の利用" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="40" y="105" width="200" height="24" as="geometry" />
-        </mxCell>
-        <mxCell id="browser" value="部員のブラウザ&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;チャット / 管理画面&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="40" y="180" width="180" height="80" as="geometry" />
-        </mxCell>
-        <mxCell id="pages" value="Cloudflare Pages&lt;br&gt;&lt;b&gt;React画面&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="300" y="135" width="190" height="75" as="geometry" />
-        </mxCell>
-        <mxCell id="api" value="Cloud Run&lt;br&gt;&lt;b&gt;Go API&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;認証 / 検索 / 回答 / 管理&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="300" y="250" width="190" height="90" as="geometry" />
-        </mxCell>
-        <mxCell id="external" value="外部サービス&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;WASA Wiki / Gemini&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="620" y="145" width="210" height="75" as="geometry" />
-        </mxCell>
-        <mxCell id="data" value="Google Cloudのデータ&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Cloud Storage: 索引&lt;br&gt;Firestore: 履歴・利用状況&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="620" y="270" width="210" height="90" as="geometry" />
+        <mxCell id="subtitle" value="1回の質問が、どのサービスをどう通るかだけを示す。認証とRAGの詳細は02・03の図にある。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="60" width="800" height="24" as="geometry" />
         </mxCell>
 
-        <mxCell id="e1" value="画面" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;" edge="1" parent="1" source="browser" target="pages">
+        <mxCell id="browser" value="&lt;b&gt;部員のブラウザ&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Wikiの利用者名でログイン&lt;br&gt;質問文と画像（長辺768pxへ縮小）&lt;br&gt;回答はSSEで少しずつ表示&lt;br&gt;履歴・共有アシスタントを選ぶ&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;verticalAlign=middle;spacingTop=18;" vertex="1" parent="1">
+          <mxGeometry x="30" y="280" width="190" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="browser-icon" value="" style="shape=internalStorage;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#3c4043;dx=6;dy=6;" vertex="1" parent="1">
+          <mxGeometry x="46" y="294" width="30" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pages" value="&lt;b&gt;Cloudflare Pages（フロントエンド）&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;React + TypeScript（Vite）をビルドした静的ファイルだけを配信する&lt;br&gt;サーバー処理は持たない。データは全てCloud RunのAPIへ問い合わせる&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="330" y="118" width="430" height="104" as="geometry" />
+        </mxCell>
+        <mxCell id="pages-icon" value="" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#3c4043;" vertex="1" parent="1">
+          <mxGeometry x="346" y="140" width="38" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="memo" value="1回の質問でLLMを3回呼ぶ（③④⑤）。&lt;br&gt;目次は毎回同じ内容を先頭へ固定し、&lt;br&gt;プロンプトキャッシュを効かせている。&lt;br&gt;利用者ごとの上限は1日30質問。" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#b9bec4;fontSize=11;fontColor=#555555;align=left;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="118" width="310" height="104" as="geometry" />
+        </mxCell>
+
+        <mxCell id="api" value="&lt;b&gt;Cloud Run（バックエンド / Go）&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;コンテナ1つ。min-instances=0（待機中は課金なし）&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fbfcfd;strokeColor=#333333;strokeWidth=2;fontSize=14;verticalAlign=top;spacingTop=16;" vertex="1" parent="1">
+          <mxGeometry x="330" y="250" width="430" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="api-icon" value="" style="shape=cube;whiteSpace=wrap;html=1;size=8;fillColor=#ffffff;strokeColor=#3c4043;darkOpacity=0.05;" vertex="1" parent="1">
+          <mxGeometry x="346" y="268" width="30" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1" value="&lt;b&gt;① ログインを中継し、本人を確かめる&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;パスワードは保存せずWikiへ中継。以後は署名付きCookieで判定&lt;/font&gt;" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#f7f8fa;strokeColor=#dcdfe3;fontSize=12;align=left;spacingLeft=14;" vertex="1" parent="1">
+          <mxGeometry x="346" y="322" width="398" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="&lt;b&gt;② 利用回数を先に確保する&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Firestoreのトランザクションで1日30質問を先に押さえる&lt;/font&gt;" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#f7f8fa;strokeColor=#dcdfe3;fontSize=12;align=left;spacingLeft=14;" vertex="1" parent="1">
+          <mxGeometry x="346" y="376" width="398" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="&lt;b&gt;③ 目次から関連ページを選ぶ&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;目次（約3.5万字）をLLMへ。実在するページ名だけ採用し最大4ページ&lt;/font&gt;" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#f7f8fa;strokeColor=#dcdfe3;fontSize=12;align=left;spacingLeft=14;" vertex="1" parent="1">
+          <mxGeometry x="346" y="430" width="398" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="&lt;b&gt;④ 読む節（チャンク）まで絞る&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;本文が12,000字以下ならページごと渡し、超えるときだけ最大8節へ絞る&lt;/font&gt;" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#f7f8fa;strokeColor=#dcdfe3;fontSize=12;align=left;spacingLeft=14;" vertex="1" parent="1">
+          <mxGeometry x="346" y="484" width="398" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="&lt;b&gt;⑤ 回答を作り、書けた分から送り返す&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;出典は索引から組み立て、モデルは番号だけを書く。差分をSSEで送る&lt;/font&gt;" style="rounded=1;arcSize=18;whiteSpace=wrap;html=1;fillColor=#f7f8fa;strokeColor=#dcdfe3;fontSize=12;align=left;spacingLeft=14;" vertex="1" parent="1">
+          <mxGeometry x="346" y="538" width="398" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="api-note" value="索引は起動時にメモリへ読み込み済み。質問のたびにWiki本文は取りに行かない" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#b9bec4;fontSize=11;fontColor=#555555;" vertex="1" parent="1">
+          <mxGeometry x="346" y="594" width="398" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="callee" value="Cloud Run が呼び出す先" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fontStyle=1;fontColor=#444444;" vertex="1" parent="1">
+          <mxGeometry x="800" y="278" width="240" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="wiki" value="&lt;b&gt;WASA Wiki（MediaWiki）&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;ログインの中継先（action=clientlogin）&lt;br&gt;回答用の本文はここから直接取らない&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;align=left;spacingLeft=52;" vertex="1" parent="1">
+          <mxGeometry x="800" y="304" width="310" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="wiki-icon" value="" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#ffffff;strokeColor=#3c4043;size=0.25;" vertex="1" parent="1">
+          <mxGeometry x="816" y="332" width="26" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="firestore" value="&lt;b&gt;Firestore&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;利用回数 / 履歴（最大30件）/ 利用者情報&lt;br&gt;共有アシスタント / 評価 / 監査ログ&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;align=left;spacingLeft=52;" vertex="1" parent="1">
+          <mxGeometry x="800" y="396" width="310" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="firestore-icon" value="" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=6;fillColor=#ffffff;strokeColor=#3c4043;" vertex="1" parent="1">
+          <mxGeometry x="816" y="424" width="26" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="gemini" value="&lt;b&gt;Gemini API&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;gemini-3.5-flash-lite（回答モードで変える）&lt;br&gt;③④⑤で1質問あたり3回。実回数は管理画面で集計&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;align=left;spacingLeft=52;" vertex="1" parent="1">
+          <mxGeometry x="800" y="488" width="310" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="gemini-icon" value="" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;size=8;fillColor=#eef1f5;strokeColor=#3c4043;" vertex="1" parent="1">
+          <mxGeometry x="812" y="518" width="34" height="26" as="geometry" />
+        </mxCell>
+
+        <mxCell id="storage" value="&lt;b&gt;Cloud Storage（非公開）&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;索引 index.json と目次 toc.md（646ページ）&lt;br&gt;起動時にメモリへ読み込む（1,012チャンク）&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;align=left;spacingLeft=52;" vertex="1" parent="1">
+          <mxGeometry x="800" y="580" width="310" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="storage-icon" value="" style="shape=trapezoid;perimeter=trapezoidPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=4;direction=south;fillColor=#ffffff;strokeColor=#3c4043;" vertex="1" parent="1">
+          <mxGeometry x="816" y="608" width="26" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" value="① 画面を受け取る" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;fontColor=#555555;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="browser" target="pages">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e2" value="API" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;" edge="1" parent="1" source="browser" target="api">
+        <mxCell id="e2" value="② 質問を送る" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;fontColor=#555555;exitX=1;exitY=0.56;exitDx=0;exitDy=0;entryX=0;entryY=0.33;entryDx=0;entryDy=0;" edge="1" parent="1" source="browser" target="api">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e3" style="edgeStyle=none;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="api" target="external">
+        <mxCell id="e3" value="③ SSEで受け取る" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;fontColor=#555555;exitX=0;exitY=0.43;exitDx=0;exitDy=0;entryX=1;entryY=0.79;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="browser">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e4" style="edgeStyle=none;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="api" target="data">
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;" edge="1" parent="1" source="s1" target="wiki">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;startArrow=classic;startFill=1;" edge="1" parent="1" source="s2" target="firestore">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;" edge="1" parent="1" source="s4" target="gemini">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;" edge="1" parent="1" source="storage" target="api-note">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <mxCell id="divider" value="" style="line;strokeWidth=1;html=1;strokeColor=#cccccc;" vertex="1" parent="1">
-          <mxGeometry x="40" y="410" width="960" height="10" as="geometry" />
-        </mxCell>
-        <mxCell id="update-title" value="資料を更新するとき" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="40" y="450" width="250" height="24" as="geometry" />
-        </mxCell>
-        <mxCell id="sources" value="Wiki・公開資料" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="40" y="520" width="180" height="65" as="geometry" />
-        </mxCell>
-        <mxCell id="rebuild" value="保守者が確認して実行&lt;br&gt;&lt;b&gt;rebuild.py&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="330" y="510" width="210" height="80" as="geometry" />
-        </mxCell>
-        <mxCell id="publish" value="Cloud Storageの索引を差し替える&lt;br&gt;&lt;b&gt;publish-index.sh&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#333333;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="650" y="510" width="210" height="80" as="geometry" />
-        </mxCell>
-        <mxCell id="e5" value="取得" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;" edge="1" parent="1" source="sources" target="rebuild">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="e6" value="人が差分を確認してから" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=11;" edge="1" parent="1" source="rebuild" target="publish">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="note" value="管理画面の「更新を確認」は公開元との差分だけを見る。再構築と反映は自動実行しない。" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#999999;fontSize=11;align=left;spacing=8;fontColor=#555555;" vertex="1" parent="1">
-          <mxGeometry x="40" y="640" width="820" height="48" as="geometry" />
+        <mxCell id="footnote" value="資料の更新（rebuild.py → Cloud Storageの索引差し替え）と管理画面は、この図の対象外。手順は07-デプロイと更新にある。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="682" width="900" height="24" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

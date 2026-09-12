@@ -264,3 +264,58 @@ test("コードと入れ子リストを含む本文でも、どの長さで切�
     );
   }
 });
+
+// ---------------------------------------------------------------- 図と表
+
+test("表の区切り行の `:` を寄せとして反映する", () => {
+  const html = renderWithin("| 項目 | 数量 | 単価 |\n|---|---:|:-:|\n| りんご | 3 | 150円 |");
+  assert.match(html, /<th>項目<\/th>/);
+  assert.match(html, /<th class="col-right">数量<\/th>/);
+  assert.match(html, /<th class="col-center">単価<\/th>/);
+  assert.match(html, /<td class="col-right">3<\/td>/);
+});
+
+test("表にはCSV保存のボタンを添える", () => {
+  const html = renderWithin("| 項目 | 数量 |\n|---|---|\n| りんご | 3 |");
+  assert.match(html, /<figure class="data-table">/);
+  assert.match(html, /data-figure-action="download-csv"/);
+});
+
+// 番号付きの手順が説明を挟んで途切れたとき、画面が「1.」へ戻すと手順の指示が壊れる。
+test("番号付きは書かれている番号から始める", () => {
+  assert.match(renderWithin("4. 桁を組む\n5. リブを通す"), /<ol start="4">/);
+  assert.match(renderWithin("1. 桁を組む"), /<ol>/);
+});
+
+// **閉じるまで図にしない。** 途中まで届いたMermaidは必ず構文が壊れており、
+// 描こうとすると1デルタごとに解析エラーになる。
+test("閉じたmermaidだけを図の入れ物にする", () => {
+  const closed = renderWithin("```mermaid\nflowchart LR\n  A --> B\n```");
+  assert.match(closed, /<figure class="diagram" data-diagram="/);
+  assert.match(closed, /data-figure-action="zoom-in"/);
+
+  const open = renderWithin("```mermaid\nflowchart LR\n  A --> B");
+  assert.doesNotMatch(open, /<figure/);
+  assert.match(open, /<pre class="code-block">/);
+});
+
+// 図が描けなくても原文は読めなければならない。描画は後から差し替える方式なので、
+// 入れ物の中には必ずコードブロックが入っている。
+test("図の入れ物には原文のコードも残す", () => {
+  const html = renderWithin("```mermaid\nflowchart LR\n  A --> B\n```");
+  assert.match(html, /<pre class="code-block diagram-code"><code>flowchart LR/);
+});
+
+// Mermaidの原文は data 属性へ入る。ここがエスケープ漏れすると、
+// 「先に全部エスケープする」という markdown.tsx の前提がそこだけ崩れる。
+test("図の原文も属性としてエスケープする", () => {
+  const html = renderWithin('```mermaid\nflowchart LR\n  A["\\"><img src=x onerror=alert(1)>"]\n```');
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&quot;|&gt;/);
+});
+
+test("mermaid以外の言語指定はこれまでどおりコードブロックにする", () => {
+  const html = renderWithin("```bash\npython rebuild.py\n```");
+  assert.match(html, /<pre class="code-block"><code>python rebuild\.py/);
+  assert.doesNotMatch(html, /<figure/);
+});

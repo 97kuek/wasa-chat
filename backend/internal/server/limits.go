@@ -42,6 +42,7 @@ const (
 
 	maxAssistants         = 100
 	maxAssistantBodyBytes = 256 << 10
+	maxProfileBodyBytes   = 128 << 10
 
 	maxConversationTurns         = 2
 	maxConversationQuestionRunes = 500

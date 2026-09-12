@@ -147,7 +147,7 @@ func Validate(a *state.Assistant) error {
 			return fmt.Errorf("参照する区分の指定が不正です")
 		}
 	}
-	if err := validateIcon(a.Icon); err != nil {
+	if err := ValidateIcon(a.Icon); err != nil {
 		return err
 	}
 	return nil
@@ -165,7 +165,8 @@ var iconPrefixes = []string{
 // 40〜72pxでしか出さないので、これで足りる（画面側で縮小してから送る）。
 const MaxIconBytes = 96 * 1024
 
-func validateIcon(icon string) error {
+// ValidateIcon はアシスタントと利用者プロフィールで共通の画像形式・上限を検査する。
+func ValidateIcon(icon string) error {
 	if icon == "" {
 		return nil // 未設定は正常。画面側が名前の頭文字で描く
 	}

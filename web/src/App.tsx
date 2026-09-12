@@ -12,6 +12,7 @@ import {
   session,
   submitFeedback,
   updateAssistant,
+  updateProfileIcon,
   type Assistant,
   type AssistantDraft,
   type Chat,
@@ -174,6 +175,7 @@ function HistoryIcon() {
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [username, setUsername] = useState("");
+  const [profileIcon, setProfileIcon] = useState("");
 	const [isAdmin, setIsAdmin] = useState(false);
   const [remaining, setRemaining] = useState(0);
   const [form, setForm] = useState({ username: "", password: "" });
@@ -185,6 +187,7 @@ export default function App() {
   // 追質問で同じ画像を使い直せる。チップとして見えているので予測できる
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const attachmentInput = useRef<HTMLInputElement>(null);
+  const profileIconInput = useRef<HTMLInputElement>(null);
   // ドラッグは子要素をまたぐたびに enter/leave が飛ぶ。数えないと、
   // 画面の上を動かしただけで枠が点滅する
   const dragDepth = useRef(0);
@@ -196,6 +199,7 @@ export default function App() {
   const [readAnnouncementIds, setReadAnnouncementIds] = useState(loadReadAnnouncementIds);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [profileIconBusy, setProfileIconBusy] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [generalFeedbackId, setGeneralFeedbackId] = useState(makeId);
   const [generalReason, setGeneralReason] = useState<FeedbackReason | null>(null);
@@ -292,6 +296,7 @@ export default function App() {
     session().then((current) => {
       setAuthed(current.authenticated);
       setUsername(current.username);
+      setProfileIcon(current.icon ?? "");
       setRemaining(current.remaining);
 		setIsAdmin(current.admin);
 		if (location.pathname === "/admin" && !current.admin) {
@@ -450,6 +455,7 @@ export default function App() {
     const current = await session();
     setAuthed(true);
     setUsername(current.username);
+    setProfileIcon(current.icon ?? "");
     setRemaining(current.remaining);
 		setIsAdmin(current.admin);
 		if (location.pathname === "/admin" && !current.admin) {
@@ -469,12 +475,43 @@ export default function App() {
     await logout();
     setAuthed(false);
     setUsername("");
+    setProfileIcon("");
 		setIsAdmin(false);
 		history.replaceState(null, "", "/");
 		setView("chat");
     syncedChats.current.clear();
     setChats([]);
     setActiveChatId(null);
+  }
+
+  async function handlePickProfileIcon(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || profileIconBusy) return;
+    setProfileIconBusy(true);
+    try {
+      const icon = await toIconDataURL(file);
+      setProfileIcon(await updateProfileIcon(icon));
+      showToast("利用者画像を変更しました");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "利用者画像を保存できませんでした");
+    } finally {
+      setProfileIconBusy(false);
+    }
+  }
+
+  async function removeProfileIcon() {
+    if (!profileIcon || profileIconBusy) return;
+    setProfileIconBusy(true);
+    try {
+      await updateProfileIcon("");
+      setProfileIcon("");
+      showToast("利用者画像を外しました");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "利用者画像を外せませんでした");
+    } finally {
+      setProfileIconBusy(false);
+    }
   }
 
 	function openAdmin() {
@@ -1095,6 +1132,7 @@ export default function App() {
       // Gemini側の制限などでサーバーが回数を返却する場合もあるため、推測で1回減らさない。
       try {
         const current = await session();
+        setProfileIcon(current.icon ?? "");
         setRemaining(current.remaining);
       } catch {
         // 残回数が取れなくても操作は続けられる。次の質問で取り直す
@@ -1171,7 +1209,7 @@ export default function App() {
   }
 
 	if (view === "admin" && isAdmin) {
-		return <Suspense fallback={<LoadingScreen label="管理者情報を確認しています" admin />}><AdminPage username={username} onBack={closeAdmin} onLogout={() => void handleLogout()} /></Suspense>;
+		return <Suspense fallback={<LoadingScreen label="管理者情報を確認しています" admin />}><AdminPage username={username} profileIcon={profileIcon} onBack={closeAdmin} onLogout={() => void handleLogout()} /></Suspense>;
 	}
 
   return (
@@ -1395,7 +1433,9 @@ export default function App() {
                   setFeedbackOpen(false);
                 }}
               >
-                {Array.from(username)[0] ?? "W"}
+                {profileIcon
+                  ? <img src={profileIcon} alt="" />
+                  : Array.from(username)[0] ?? "W"}
               </button>
               {profileOpen && (
                 <section className="header-popover profile-popover" id="profile-popover" aria-label="利用者メニュー">
@@ -1403,6 +1443,17 @@ export default function App() {
                     <span>ログイン中</span>
                     <strong>{username}</strong>
                   </div>
+                  <input
+                    ref={profileIconInput}
+                    type="file"
+                    className="visually-hidden"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(event) => void handlePickProfileIcon(event)}
+                  />
+                  <button type="button" disabled={profileIconBusy} onClick={() => profileIconInput.current?.click()}>
+                    {profileIconBusy ? "画像を保存中…" : profileIcon ? "利用者画像を変更" : "利用者画像を設定"}
+                  </button>
+                  {profileIcon && <button type="button" disabled={profileIconBusy} onClick={() => void removeProfileIcon()}>利用者画像を外す</button>}
                   <a href={APP_URLS.wiki} target="_blank" rel="noreferrer noopener">WASA Wikiを開く</a>
                   <a href={APP_URLS.support} target="_blank" rel="noreferrer noopener">ヘルプとポリシー</a>
 									{isAdmin && <button type="button" onClick={openAdmin}>管理画面</button>}

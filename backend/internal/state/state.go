@@ -136,11 +136,12 @@ type Feedback struct {
 	SubmittedAt   string        `json:"submittedAt" firestore:"submitted_at"`
 }
 
-// UserProfile は管理画面で利用回数を実名と結び付けるための最小限の名簿。
+// UserProfile は管理画面で利用回数を実名と結び付け、本人の任意画像を保存する。
 // 質問・回答は持たず、保存先のIDは従来どおり利用者名のHMAC値にする。
 type UserProfile struct {
 	Key       string    `json:"-" firestore:"-"`
 	Username  string    `json:"username" firestore:"username"`
+	Icon      string    `json:"icon,omitempty" firestore:"icon,omitempty"`
 	FirstSeen time.Time `json:"firstSeen" firestore:"first_seen"`
 	LastSeen  time.Time `json:"lastSeen" firestore:"last_seen"`
 }
@@ -218,6 +219,8 @@ type Store interface {
 	Take(context.Context, string, string, int) (bool, error)
 	Refund(context.Context, string, string) error
 	SaveUserProfile(context.Context, string, string, time.Time) error
+	GetUserProfile(context.Context, string) (UserProfile, bool, error)
+	SaveUserIcon(context.Context, string, string) error
 	ListUserProfiles(context.Context) ([]UserProfile, error)
 	ListDailyUsage(context.Context, string, string) ([]DailyUsage, error)
 	PurgeDailyUsage(context.Context, string, string) (int, error)

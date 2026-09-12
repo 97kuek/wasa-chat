@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -79,6 +80,25 @@ func (m *Memory) SaveUserProfile(_ context.Context, key, username string, at tim
 	}
 	profile.Username = username
 	profile.LastSeen = at
+	m.profiles[key] = profile
+	return nil
+}
+
+func (m *Memory) GetUserProfile(_ context.Context, key string) (UserProfile, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	profile, ok := m.profiles[key]
+	return profile, ok, nil
+}
+
+func (m *Memory) SaveUserIcon(_ context.Context, key, icon string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	profile, ok := m.profiles[key]
+	if !ok {
+		return fmt.Errorf("利用者プロフィールがありません")
+	}
+	profile.Icon = icon
 	m.profiles[key] = profile
 	return nil
 }

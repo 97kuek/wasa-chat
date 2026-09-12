@@ -1,6 +1,8 @@
-import { memo } from "react";
+import { memo, useEffect, useRef, type MouseEvent } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
+
+import { copyText, downloadTableCSV, downloadDiagram, renderDiagrams, zoomDiagram } from "./diagram";
 
 /**
  * 回答本文のMarkdownを描画する。
@@ -11,9 +13,15 @@ import "katex/dist/katex.min.css";
  * ここでは **先にすべてエスケープしてから整形する** ので、
  * 生のHTMLが通る経路が構造的に存在しない。
  *
+ * ⚠️ **例外は Mermaid の図だけである**（2026-09-12に追加）。Mermaidは
+ * テキストからSVGを組み立てて差し込むので、この「先に全部エスケープする」
+ * 原則の外にある唯一の経路になる。そのため図の描画は `diagram.ts` へ隔離し、
+ * ここでは**図の原文をエスケープして data 属性へ置くだけ**にしてある。
+ * 描画に失敗したときはコードブロックのまま残す（原文は必ず読める）。
+ *
  * 対応する記法は生成文に実際に出るものだけ:
  * 見出し / 箇条書き（入れ子・継続行つき） / 番号付き / 表 / 引用 / 水平線 /
- * 強調 / コード（行内・フェンス付き） / リンク / TeX数式。
+ * 強調 / コード（行内・フェンス付き） / リンク / TeX数式 / Mermaidの図。
  */
 
 type Inline = { html: string };
@@ -179,9 +187,44 @@ const cells = (line: string) =>
 
 const isDivider = (line: string) => /^\|?[\s:|-]+\|[\s:|-]*$/.test(line.trim());
 
-/** ``` または ~~~ で囲まれたコードブロック。開始行の言語名は表示に使わない。 */
-const FENCE_OPEN = /^\s*(`{3,}|~{3,})\s*\S*\s*$/;
+/**
+ * 区切り行の `:` から列ごとの寄せを読む（`|---:|` は右寄せ、`|:--:|` は中央）。
+ *
+ * 以前は区切り行を「表かどうか」の判定にしか使っておらず、**寄せの指定を
+ * 捨てていた。** 数量や金額の列は右寄せで出力されることが多く、
+ * 左寄せのまま並ぶと桁が揃わずに読みにくい。
+ */
+const alignmentsOf = (divider: string) =>
+  cells(divider).map((cell) => {
+    const head = cell.startsWith(":");
+    const tail = cell.endsWith(":");
+    if (head && tail) return ' class="col-center"';
+    if (tail) return ' class="col-right"';
+    return "";
+  });
+
+/** ``` または ~~~ で囲まれたコードブロック。言語名は mermaid の判定にだけ使う。 */
+const FENCE_OPEN = /^\s*(`{3,}|~{3,})\s*(\S*)\s*$/;
 const FENCE_CLOSE = /^\s*(`{3,}|~{3,})\s*$/;
+
+/**
+ * 図と表に添えるボタンの絵柄。
+ *
+ * 画面のほかの場所と同じく、外部のアイコンフォントは足さずにSVGを直接書く。
+ * `stroke="currentColor"` にしてあるので、色はCSS側だけで決まる。
+ */
+const ICONS = {
+  copy: '<path d="M9 9V5.5A1.5 1.5 0 0 1 10.5 4h8A1.5 1.5 0 0 1 20 5.5v8a1.5 1.5 0 0 1-1.5 1.5H15"/><rect x="4" y="9" width="11" height="11" rx="1.5"/>',
+  zoomOut: '<circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M20 20l-4.7-4.7"/>',
+  zoomIn: '<circle cx="11" cy="11" r="6"/><path d="M8.5 11h5M11 8.5v5M20 20l-4.7-4.7"/>',
+  download: '<path d="M12 4v11m0 0 4-4m-4 4-4-4M4 19h16"/>',
+  source: '<path d="m9 8-5 4 5 4M15 8l5 4-5 4"/>',
+} as const;
+
+const iconButton = (action: string, icon: string, label: string) =>
+  `<button type="button" class="figure-button" data-figure-action="${action}" title="${label}" aria-label="${label}">` +
+  `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" ` +
+  `stroke-linecap="round" stroke-linejoin="round">${icon}</svg></button>`;
 
 /**
  * フェンス付きコードブロックを取り出す。
@@ -196,22 +239,53 @@ function fencedCode(lines: string[], start: number): { html: string; next: numbe
   const open = lines[start].match(FENCE_OPEN);
   if (!open) return null;
   const fence = open[1];
+  const language = open[2].toLowerCase();
   const body: string[] = [];
   let i = start + 1;
+  let closed = false;
   while (i < lines.length) {
     const close = lines[i].match(FENCE_CLOSE);
     // 開いたときと同じ記号で、同じ長さ以上のときだけ閉じる
     if (close && close[1][0] === fence[0] && close[1].length >= fence.length) {
       i++;
+      closed = true;
       break;
     }
     body.push(lines[i]);
     i++;
   }
-  return {
-    html: `<pre class="code-block"><code>${escapeHtml(body.join("\n"))}</code></pre>`,
-    next: i,
-  };
+  const source = body.join("\n");
+  const code = `<pre class="code-block"><code>${escapeHtml(source)}</code></pre>`;
+
+  // **閉じるまでは図にしない。** 途中まで届いたMermaidは必ず構文として壊れており、
+  // 描こうとすると1デルタごとに解析エラーが出る。閉じるまでコードとして見せ、
+  // 閉じた瞬間に図へ差し替える（コードブロックの扱いと同じ考え方）
+  if (language === "mermaid" && closed && source.trim()) {
+    return { html: diagramFigure(source), next: i };
+  }
+  return { html: code, next: i };
+}
+
+/**
+ * Mermaidの図の入れ物を返す。この時点ではまだ図になっておらず、原文のコードが入る。
+ *
+ * 実際の描画は `diagram.ts` が後から行い、成功したときだけ `is-rendered` が付く。
+ * **描画できなくてもコードは残る**ので、図が出ないことで情報そのものが消えることはない。
+ */
+function diagramFigure(source: string): string {
+  const toolbar =
+    iconButton("copy", ICONS.copy, "図の記述をコピー") +
+    iconButton("zoom-out", ICONS.zoomOut, "縮小") +
+    iconButton("zoom-in", ICONS.zoomIn, "拡大") +
+    iconButton("download", ICONS.download, "図をSVGで保存") +
+    iconButton("source", ICONS.source, "記述と図を切り替える");
+  return (
+    `<figure class="diagram" data-diagram="${escapeHtml(source)}">` +
+    `<div class="figure-toolbar">${toolbar}</div>` +
+    `<div class="diagram-view"></div>` +
+    `<pre class="code-block diagram-code"><code>${escapeHtml(source)}</code></pre>` +
+    `</figure>`
+  );
 }
 
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/;
@@ -240,6 +314,9 @@ function listBlock(lines: string[], start: number): { html: string; next: number
   if (!head) return null;
   const indent = head[1].length;
   const ordered = ORDERED_ITEM.test(lines[start]);
+  // 手順の途中に説明の段落が挟まると、そこでリストが切れて番号が1へ戻る。
+  // 「4. 次に〜」と書かれているのに画面が「1.」と出すと、手順の指示として壊れる
+  const firstNumber = ordered ? Number(lines[start].match(/^\s*(\d+)/)?.[1] ?? 1) : 1;
   const items: string[] = [];
   let i = start;
 
@@ -280,7 +357,8 @@ function listBlock(lines: string[], start: number): { html: string; next: number
 
   if (items.length === 0) return null;
   const tag = ordered ? "ol" : "ul";
-  return { html: `<${tag}>${items.join("")}</${tag}>`, next: i };
+  const from = ordered && firstNumber > 1 ? ` start="${firstNumber}"` : "";
+  return { html: `<${tag}${from}>${items.join("")}</${tag}>`, next: i };
 }
 
 export function renderMarkdown(source: string, sources: Citation[] = []): string {
@@ -316,16 +394,26 @@ export function renderMarkdown(source: string, sources: Citation[] = []): string
 
     // 表: ヘッダ行 + 区切り行 が揃っているときだけ表として扱う
     if (line.trim().startsWith("|") && isDivider(lines[i + 1] ?? "")) {
-      const head = cells(line).map((c) => `<th>${inline(c).html}</th>`).join("");
+      const align = alignmentsOf(lines[i + 1]);
+      const head = cells(line)
+        .map((c, column) => `<th${align[column] ?? ""}>${inline(c).html}</th>`)
+        .join("");
       i += 2;
       const body: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith("|")) {
-        body.push(`<tr>${cells(lines[i]).map((c) => `<td>${inline(c).html}</td>`).join("")}</tr>`);
+        const row = cells(lines[i])
+          .map((c, column) => `<td${align[column] ?? ""}>${inline(c).html}</td>`)
+          .join("");
+        body.push(`<tr>${row}</tr>`);
         i++;
       }
+      // CSVでの保存を添える。表のまま読むより、数字を手元で並べ替えたい場面がある
       out.push(
-        `<div class="table-scroll"><table><thead><tr>${head}</tr></thead>` +
-          `<tbody>${body.join("")}</tbody></table></div>`,
+        `<figure class="data-table">` +
+          `<div class="table-scroll"><table><thead><tr>${head}</tr></thead>` +
+          `<tbody>${body.join("")}</tbody></table></div>` +
+          `<div class="figure-actions">${iconButton("download-csv", ICONS.download, "表をCSVで保存")}</div>` +
+          `</figure>`,
       );
       continue;
     }
@@ -412,9 +500,53 @@ export function renderMarkdown(source: string, sources: Citation[] = []): string
 export const Markdown = memo(function Markdown(
   { text, sources }: { text: string; sources?: Citation[] },
 ) {
+  const host = useRef<HTMLDivElement>(null);
   // renderMarkdown はエスケープ済みの文字列しか組み立てないため、
   // ここで生HTMLとして差し込んでも外部由来のタグは通らない
+  const html = renderMarkdown(text, sources);
+
+  // 図はHTMLを差し込んだ**後**に描く。本文が変わるたびにReactが innerHTML を
+  // 作り直すので、描いたSVGはそのたびに消える。diagram.ts が原文で覚えているため、
+  // 2回目以降は読み込みも解析もせずに戻る（回答は1文字ずつ届く＝この経路を何度も通る）
+  useEffect(() => {
+    void renderDiagrams(host.current);
+  }, [html]);
+
+  // ボタンは生成したHTMLの中にあるので、React側では受け取れない。
+  // 1か所で拾って振り分ける（図・表の数だけハンドラを作らずに済む）
+  const onClick = (event: MouseEvent<HTMLDivElement>) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-figure-action]");
+    if (!button) return;
+    const figure = button.closest<HTMLElement>("figure");
+    if (!figure) return;
+    switch (button.dataset.figureAction) {
+      case "copy":
+        void copyText(figure.dataset.diagram ?? "");
+        break;
+      case "zoom-in":
+        zoomDiagram(figure, +1);
+        break;
+      case "zoom-out":
+        zoomDiagram(figure, -1);
+        break;
+      case "download":
+        downloadDiagram(figure);
+        break;
+      case "source":
+        figure.classList.toggle("is-source");
+        break;
+      case "download-csv":
+        downloadTableCSV(figure);
+        break;
+    }
+  };
+
   return (
-    <div className="prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(text, sources) }} />
+    <div
+      className="prose"
+      ref={host}
+      onClick={onClick}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 });

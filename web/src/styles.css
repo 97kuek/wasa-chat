@@ -662,6 +662,14 @@ button:disabled {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--surface);
+
+  /* 会話と入力欄は同じ列に載せる。**左右の余白と列幅を別々に書かないこと。**
+     以前は会話側が padding 16px / 列 900px、入力欄側が 12px / 860px で、
+     自分の吹き出しの右端が入力欄と揃っていなかった
+     （2026-09-12に実測: スマホ360〜480pxで4px内側、PC1020px以上で20px外側）。
+     吹き出しは右寄せなので、ズレが真っ先に目に付くのがこの要素になる */
+  --chat-column: 900px;
+  --chat-gutter: clamp(20px, 6vw, 80px);
 }
 
 /* 画面のどこへ落としても添付になる。狙う的を小さくしない */
@@ -801,6 +809,12 @@ button:disabled {
 .profile-avatar:hover {
   border-color: var(--muted);
   background: var(--surface);
+}
+
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .header-popover {
@@ -1014,6 +1028,11 @@ button:disabled {
   background: var(--surface-soft);
 }
 
+.profile-popover > button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .conversation {
   min-height: 0;
   /* 保険。表と数式は内側に自前の横スクロールを持っているので、ここを塞いでも
@@ -1021,12 +1040,12 @@ button:disabled {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 38px clamp(20px, 6vw, 80px) 28px;
+  padding: 38px var(--chat-gutter) 28px;
   scroll-padding-bottom: 24px;
 }
 
 .conversation > * {
-  width: min(900px, 100%);
+  width: min(var(--chat-column), 100%);
   margin-inline: auto;
 }
 
@@ -1616,8 +1635,83 @@ button:disabled {
   text-align: left;
 }
 
+/* ---- 本文の中の図と表 ---- */
+
+/* 図と表に添えるボタン。本文の邪魔をしないよう、色は常に控えめにする */
+.figure-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.figure-button svg { width: 17px; }
+.figure-button:hover { background: var(--surface-soft); color: var(--text); }
+.figure-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.figure-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+}
+
+.figure-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.prose figure { margin: 0 0 1em; }
+
+/* 上を広く空けるのは、ボタンを図に重ねないため。スマホでは図が横いっぱいに
+   広がるので、重ねると必ずノードの上へ乗る（2026-09-12に390px幅で確認） */
+.diagram {
+  position: relative;
+  padding: 44px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+/* 描けるまでは原文のコードを見せる。描けたら図と入れ替える。
+   `is-source` は利用者が `<>` を押して原文へ戻した状態 */
+.diagram .diagram-view { display: none; }
+.diagram.is-rendered .diagram-view { display: block; }
+.diagram.is-rendered .diagram-code { display: none; }
+.diagram.is-rendered.is-source .diagram-view { display: none; }
+.diagram.is-rendered.is-source .diagram-code { display: block; }
+
+/* 描けていない図にはボタンを出さない。拡大も保存も対象が無い */
+.diagram:not(.is-rendered) .figure-toolbar { display: none; }
+.diagram .diagram-code { margin: 0; }
+
+.diagram-view {
+  overflow-x: auto;
+  text-align: center;
+}
+
+/* 拡大は幅で行う。transformだと高さが変わらず、下の本文と重なる */
+.diagram-view svg {
+  width: calc(var(--diagram-zoom, 1) * 100%);
+  height: auto;
+}
+
+/* スマホでは幅に合わせると文字が6px前後になり読めない（2026-09-12に390px幅で確認）。
+   最低限の大きさを保ち、収まらないぶんは表と同じく横スクロールで見せる */
+@media (max-width: 560px) {
+  .diagram { padding: 42px 10px 10px; }
+  .diagram-view svg { min-width: 480px; }
+}
+
 .table-scroll {
-  margin: 0 0 1em;
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1631,16 +1725,27 @@ button:disabled {
 
 .prose th,
 .prose td {
-  padding: 9px 13px;
+  padding: 10px 14px;
+  border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
-  white-space: nowrap;
+  /* 折り返しを許す。nowrapだと、3列でもスマホ（360〜430px）では必ず
+     横スクロールになっていた（2026-09-12に実測）。長い型番やURLだけは
+     単語の途中でも折る */
+  overflow-wrap: anywhere;
 }
+
+.prose th:last-child,
+.prose td:last-child { border-right: 0; }
+
+.prose td.col-right, .prose th.col-right { text-align: right; }
+.prose td.col-center, .prose th.col-center { text-align: center; }
 
 .prose thead th {
   background: var(--surface-soft);
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .prose tbody tr:last-child td { border-bottom: 0; }
@@ -1651,12 +1756,12 @@ button:disabled {
   position: relative;
   z-index: 2;
   margin-top: -34px;
-  padding: 48px clamp(20px, 6vw, 80px) 10px;
+  padding: 48px var(--chat-gutter) 10px;
   background: linear-gradient(to bottom, rgb(255 255 255 / 0%), rgb(255 255 255 / 94%) 34px, #fff 54px);
 }
 
 .composer-area > * {
-  width: min(860px, 100%);
+  width: min(var(--chat-column), 100%);
   margin-inline: auto;
 }
 
@@ -1994,7 +2099,8 @@ button:disabled {
     justify-self: stretch;
   }
   .profile-avatar { width: 32px; height: 32px; }
-  .conversation { padding-inline: 16px; }
+  /* 会話と入力欄をまとめて動かす。片方だけ書くと右端がズレる（.chat-panel参照） */
+  .chat-panel { --chat-gutter: 16px; }
   .suggestions { grid-template-columns: 1fr; }
   .intro { align-content: start; padding-top: 14px; }
   .intro-logo { width: min(310px, 78vw); }
@@ -2006,7 +2112,6 @@ button:disabled {
   .assistant-row > .avatar { width: 28px !important; height: 28px !important; font-size: 12px !important; }
   .answer-feedback-comment { grid-template-columns: 1fr auto; }
   .answer-feedback-comment textarea { grid-column: 1 / -1; }
-  .composer-area { padding-inline: 12px; }
   .disclaimer { margin-top: 5px; }
 }
 
