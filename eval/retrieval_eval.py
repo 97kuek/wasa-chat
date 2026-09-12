@@ -98,17 +98,26 @@ class BM25:
 
 
 def score(questions: list[dict], retrieve: Retriever, chunk_page: dict[str, str]) -> dict:
-    """Evidence Recall / All-Evidence Recall / MRR を算出する。
+    """Evidence Hit / Evidence Recall / All-Evidence / Page Recall / MRR を算出する。
 
     ページ単位のRecallも併記する。36,261字ある「駆動・フレーム班」が
     ヒットしただけで正解扱いになる指標では実力が測れないことを、
     数字の差として見えるようにするため。
+
+    ⚠️ **Hit と Recall を混同しないこと。**
+    - Evidence **Hit**@k    : 正解の節を1件でも拾えた質問の割合
+    - Evidence **Recall**@k : 正解の節のうち何割を拾えたか（根拠の総数で割る）
+
+    以前は前者を `chunk_recall` という名前で持ち、Recall として報告していた。
+    ページ単位のRecallが実力を17ポイント過大評価したのと同じ取り違えである（M1）。
+    docs/08 の「BM25 Evidence Recall@5 51.5%」は**Hit@5の値**である。
     """
     scored = [q for q in questions if q["evidence_chunks"]]
     out = {
         "n": len(scored),
         "skipped": [q["id"] for q in questions if not q["evidence_chunks"]],
-        "chunk_recall": {}, "all_evidence_recall": {}, "page_recall": {},
+        "evidence_hit": {}, "evidence_recall": {}, "all_evidence_recall": {}, "page_recall": {},
+        "gold_total": {}, "found_total": {},
         "mrr": 0.0, "per_type": defaultdict(lambda: {"n": 0, "hit@5": 0}), "misses": [],
     }
 
@@ -120,11 +129,15 @@ def score(questions: list[dict], retrieve: Retriever, chunk_page: dict[str, str]
 
         for k in K_VALUES:
             top = ranked[:k]
-            out["chunk_recall"].setdefault(k, 0)
+            out["evidence_hit"].setdefault(k, 0)
             out["all_evidence_recall"].setdefault(k, 0)
             out["page_recall"].setdefault(k, 0)
+            out["gold_total"].setdefault(k, 0)
+            out["found_total"].setdefault(k, 0)
+            out["gold_total"][k] += len(gold)
+            out["found_total"][k] += len(gold & set(top))
             if gold & set(top):
-                out["chunk_recall"][k] += 1
+                out["evidence_hit"][k] += 1
             if gold <= set(top):
                 out["all_evidence_recall"][k] += 1
             if gold_pages & {chunk_page[c] for c in top if c in chunk_page}:
@@ -139,6 +152,10 @@ def score(questions: list[dict], retrieve: Retriever, chunk_page: dict[str, str]
             out["misses"].append((q["id"], q["question"][:34], rank))
 
     out["mrr"] = reciprocal / len(scored) if scored else 0.0
+    out["evidence_recall"] = {
+        k: (out["found_total"][k] / out["gold_total"][k] if out["gold_total"][k] else 0.0)
+        for k in K_VALUES
+    }
     return out
 
 
@@ -146,11 +163,14 @@ def report(name: str, result: dict) -> None:
     n = result["n"]
     pct = lambda x: f"{x / n * 100:5.1f}%"
     print(f"\n{'=' * 62}\n{name}  (採点対象 {n}問)\n{'=' * 62}")
-    print(f"{'k':>3} | {'Evidence Recall':>16} | {'All-Evidence':>13} | {'Page Recall':>12}")
-    print("-" * 62)
+    print(f"{'k':>3} | {'Evidence Hit':>13} | {'Evidence Recall':>16} | "
+          f"{'All-Evidence':>13} | {'Page Recall':>12}")
+    print("-" * 78)
     for k in K_VALUES:
-        print(f"{k:>3} | {pct(result['chunk_recall'][k]):>16} | "
+        print(f"{k:>3} | {pct(result['evidence_hit'][k]):>13} | "
+              f"{result['evidence_recall'][k] * 100:15.1f}% | "
               f"{pct(result['all_evidence_recall'][k]):>13} | {pct(result['page_recall'][k]):>12}")
+    print("  Hit＝1件でも拾えた質問の割合 / Recall＝拾えた根拠の割合。混同しないこと")
     print(f"\nMRR: {result['mrr']:.3f}")
 
     print("\n種別ごとの Hit@5:")

@@ -26,8 +26,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from eval.judge_calibration import cohens_kappa, confusion  # noqa: E402
 from eval.answer_eval import (  # noqa: E402
     CITATION,
+    retrieval_scores,
     answered_well,
     body_only,
     strip_citations,
@@ -145,3 +147,62 @@ class BodyOnlyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetrievalScoresTest(unittest.TestCase):
+    """節単位の採点。**「1件でも拾えた」と「全部拾えた」を混同しない。**
+
+    ページ単位のRecallが実力を17ポイント過大評価したのと同じ取り違えが、
+    チャンク単位でも起きていた（chunk_recall の実体は Hit@k だった）。
+    """
+
+    def test_gold無しは採点対象外(self):
+        self.assertIsNone(retrieval_scores([], ["p1-c1"]))
+
+    def test_一部だけ拾えた場合(self):
+        s = retrieval_scores(["a", "b"], ["a", "x", "y"])
+        self.assertTrue(s["hit"])
+        self.assertFalse(s["all_evidence"])
+        self.assertEqual(s["recall"], 0.5)
+        self.assertAlmostEqual(s["precision"], 1 / 3)
+
+    def test_全部拾えた場合(self):
+        s = retrieval_scores(["a", "b"], ["b", "a"])
+        self.assertTrue(s["all_evidence"])
+        self.assertEqual(s["recall"], 1.0)
+        self.assertEqual(s["precision"], 1.0)
+
+    def test_1件も拾えない場合(self):
+        s = retrieval_scores(["a"], ["x"])
+        self.assertFalse(s["hit"])
+        self.assertEqual(s["recall"], 0.0)
+        self.assertEqual(s["precision"], 0.0)
+
+    def test_節を1件も渡していない場合は0で割らない(self):
+        s = retrieval_scores(["a"], [])
+        self.assertEqual(s["precision"], 0.0)
+
+
+class JudgeCalibrationTest(unittest.TestCase):
+    """**false-accept を最重視する。** 引き継ぎ資料では、答えられないことより
+    間違って答えることのほうがはるかに有害である（docs/01 §5-3）。"""
+
+    def test_全員同じ判定ならκは算出できない(self):
+        self.assertIsNone(cohens_kappa([(True, True), (True, True)]))
+
+    def test_完全一致のκは1(self):
+        self.assertEqual(cohens_kappa([(True, True), (False, False)]), 1.0)
+
+    def test_偶然の一致を差し引く(self):
+        # 8割一致でも、偏りが強ければκは1にならない
+        pairs = [(True, True)] * 8 + [(False, True), (True, False)]
+        kappa = cohens_kappa(pairs)
+        self.assertIsNotNone(kappa)
+        self.assertLess(kappa, 0.5)
+
+    def test_人手が裏付けなしと見たものを通したらfalse_accept(self):
+        counts = confusion([(False, True), (True, True), (False, False), (True, False)])
+        self.assertEqual(counts["false_accept"], 1)
+        self.assertEqual(counts["false_reject"], 1)
+        self.assertEqual(counts["true_accept"], 1)
+        self.assertEqual(counts["true_reject"], 1)

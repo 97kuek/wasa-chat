@@ -432,6 +432,29 @@ class Pipeline:
             titles = self.fallback_pages(search_question)
 
         chunk_ids = self.select_chunks(search_question, titles, mode)
+        return self.generate(question, titles, chunk_ids, history, mode,
+                             answerable=answerable, dropped=dropped)
+
+    def answer_with_chunks(self, question: str, chunk_ids: list[str],
+                           history: list[dict[str, str]] | None = None,
+                           mode: str = "auto") -> Answer:
+        """検索を通さず、与えられた節だけで回答する（Oracle-context評価用）。
+
+        **検索段を飛ばすだけで、生成段はまったく同じ経路を通す。** 別の組み立てを
+        書くと、Oracleで測った値が本番の生成を説明しなくなる。これで
+        「検索が悪いのか生成が悪いのか」が初めて切り分けられる（docs/01 §5-1）。
+        """
+        titles: list[str] = []
+        for cid in chunk_ids:
+            title = self.chunk_page.get(cid)
+            if title and title not in titles:
+                titles.append(title)
+        return self.generate(question, titles, chunk_ids, history, mode)
+
+    def generate(self, question: str, titles: list[str], chunk_ids: list[str],
+                 history: list[dict[str, str]] | None = None, mode: str = "auto",
+                 answerable: bool = True, dropped: list[str] | None = None) -> Answer:
+        """選び終えた節から回答を作る。検索経路とOracle評価で共有する。"""
         # 資料番号はページの並び順（1始まり）。本番Goと同じ振り方にしないと、
         # 測定した [n] の付き方が本番を説明しない
         source_number = {title: i + 1 for i, title in enumerate(titles)}
@@ -467,6 +490,6 @@ class Pipeline:
             pages=titles,
             chunk_ids=chunk_ids,
             answerable=answerable,
-            dropped_titles=dropped,
+            dropped_titles=dropped or [],
             context_chars=len(context),
         )

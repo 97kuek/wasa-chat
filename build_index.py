@@ -580,15 +580,27 @@ GEN_BODY = re.compile(r"(?<![0-9])(3[0-9]|4[0-9])\s*(?:(?:st|nd|rd|th)\b|代)(?!
 # 「駆動・フレーム班」は見出しに「40代引き継ぎ」「41, 42代引き継ぎ」を持つ
 # 36,261字のハブページで、代の出現は 38代20回 / 40代9回 / 42代9回 / 36代5回。
 # ここから1つ選ぶこと自体が誤りで、正しくは「36〜42代を扱うページ」である。
+# さらに、**言及が4代以上に散っていれば単一の代を決めない。**
+#
+# 上の2条件だけでは、当の「駆動・フレーム班」が素通りしていた（38代20回に対し
+# 次点9回なので、2倍以上を満たしてしまう）。文書が「単一の代を付けてはいけない」
+# 実例として挙げているページが、規則をすり抜けていたことになる
+# （2026-09-12に実データで確認）。
+#
+# 閾値を4にしたのは現行索引の分布から。gen_source="body" の79ページのうち、
+# 言及した代の種類数は 1種44件 / 2種29件 / 3種4件 / 4種1件 / 8種1件。
+# 4以上はハブページ（駆動・フレーム班）と、40〜43代にまたがる「合宿」だけで、
+# どちらも1つの代の記録として並べ替えると誤りになる。
 GEN_MIN_HITS = 2
 GEN_DOMINANCE = 2
+GEN_MAX_SPREAD = 4
 
 
 def extract_gen(title: str, body: str) -> dict:
     """代（世代）を抽出する。根拠の強さで3つに分ける。
 
     - `title`: タイトルに代が入っている。確定
-    - `body` : 本文で1つの代が明確に優勢。推定
+    - `body` : 本文で1つの代が明確に優勢で、かつ言及が散っていない。推定
     - `mentions`: 複数の代を扱うページ。**単一の代は決めない**
 
     タイトルに代が入っているのは114ページ中26ページしかないので、本文にも
@@ -611,7 +623,8 @@ def extract_gen(title: str, body: str) -> dict:
     ranked = mentioned.most_common()
     top, hits = ranked[0]
     runner_up = ranked[1][1] if len(ranked) > 1 else 0
-    if hits >= GEN_MIN_HITS and hits >= GEN_DOMINANCE * runner_up:
+    spread_out = len(mentioned) >= GEN_MAX_SPREAD
+    if not spread_out and hits >= GEN_MIN_HITS and hits >= GEN_DOMINANCE * runner_up:
         return {"gen": top, "gen_source": "body", "gens_mentioned": sorted(mentioned)}
     return {"gen": None, "gen_source": "mentions", "gens_mentioned": sorted(mentioned)}
 
