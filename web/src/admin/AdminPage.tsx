@@ -91,8 +91,13 @@ function quotaStateLabel(state: AdminOverview["quota"]["state"]): string {
   return "利用可能";
 }
 
+/** 出所の表示名。Go側 pipeline.OriginLabel と同じにすること。
+ *  Wiki以外をまとめて「公式サイト」と出していたため、
+ *  フライトシミュレータの差分も公式サイトとして表示されていた（2026-09-12に発見）。 */
 function sourceLabel(source: string): string {
-  return source === "wiki" ? "Wiki" : "公式サイト";
+  if (source === "site") return "公式サイト";
+  if (source === "fee") return "フライトシミュレータ";
+  return "Wiki";
 }
 
 function changeCount(result: SourceCheckResult): number {

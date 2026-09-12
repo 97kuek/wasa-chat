@@ -96,23 +96,35 @@ type file struct {
 
 // 目次の出所ごとの見出し。build_toc.py が出力する文言と一致させること。
 const (
-	wikiHeading = "\n## 引き継ぎWiki（部内限定）"
-	siteHeading = "\n## 公式サイト（一般公開"
+	wikiHeading   = "\n## 引き継ぎWiki（部内限定）"
+	siteHeading   = "\n## 公式サイト（一般公開"
+	originHeading = "\n## " // 出所の節の切れ目
 )
 
-// siteOnlyTOC は目次から引き継ぎWikiの部分を落とす。
+// siteOnlyTOC は目次から公式サイトの節だけを抜き出す。
 //
 // 先頭の事実カード（人が書いた団体の基本情報）と公式サイトの節だけを残す。
 // **見出しが見つからないときは空を返す。** 全体を返すと部内資料が
 // 「公式サイトのみ」の回答へ混ざるので、目次なしで動く方を選ぶ
 // （精度は落ちるが、混ざるよりよい）。
+//
+// ⚠️ **公式サイト節の「終わり」も見ること。** 以前は siteAt から末尾まで
+// 返していたため、後ろに足された節がそのまま付いてきた。出所が3つになった
+// とき（M27でフライトシミュレータのガイドを追加）にこの関数が追随せず、
+// 「公式サイトのみ」のアシスタントの目次へFEEの全32ページが入っていた
+// （2026-09-12に発見）。**出所を足すたびに同じ壊れ方をしない形にする。**
 func siteOnlyTOC(toc string) string {
 	wikiAt := strings.Index(toc, wikiHeading)
 	siteAt := strings.Index(toc, siteHeading)
 	if wikiAt < 0 || siteAt < 0 || siteAt < wikiAt {
 		return ""
 	}
-	return toc[:wikiAt] + "\n" + toc[siteAt:]
+	site := toc[siteAt:]
+	// 自分の見出しの次に来る `## ` までが公式サイトの節
+	if next := strings.Index(site[len(originHeading):], originHeading); next >= 0 {
+		site = site[:len(originHeading)+next]
+	}
+	return toc[:wikiAt] + "\n" + site
 }
 
 // Load は dir 直下の index.json と toc.md を読み込む。

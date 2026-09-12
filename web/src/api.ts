@@ -2,13 +2,21 @@
 
 import { API_ORIGIN } from "./config";
 
+/**
+ * 資料の出所。サーバー側の `assistant.origins` と同じ集合にすること。
+ *
+ * ここが欠けていると、画面からその出所を選べないまま
+ * サーバーだけが受け付ける状態になる（実際 `fee` がその状態だった）。
+ */
+export type AssistantOrigin = "wiki" | "site" | "fee";
+
 export type Source = {
   title: string;
   url: string;
   last_edited: string;
-  /** "wiki" = 部内限定の引き継ぎWiki、"site" = 一般公開の公式サイト。
-   *  部外に出せる情報かどうかの判断に要るので、出典に必ず出す。 */
-  origin?: "wiki" | "site";
+  /** 資料の出所。**部外に出せる情報かどうかの判断に要る**ので、出典に必ず出す。
+   *  値はサーバー側（assistant.origins）と同じにすること。 */
+  origin?: AssistantOrigin;
   /** この資料から実際に読んだ節のパンくず（「ページ名 &gt; 見出し」）。
    *  回答末尾の「参照」に出し、どこを開けば確かめられるかまで示す。
    *  節を選び終えるまで確定しないので、`pages`イベントは2回流れる。 */
@@ -169,7 +177,7 @@ export type Assistant = {
   description: string;
   instruction: string;
   team?: string;
-  origin?: "wiki" | "site";
+  origin?: AssistantOrigin;
   /** data URI の画像。未設定なら画面側が名前の頭文字で描く。 */
   icon?: string;
   glossary?: GlossaryEntry[];
@@ -209,7 +217,7 @@ export type AssistantDraft = {
   description: string;
   instruction: string;
   team?: string;
-  origin?: "wiki" | "site";
+  origin?: AssistantOrigin;
   icon?: string;
   glossary?: GlossaryEntry[];
 };

@@ -739,3 +739,32 @@ func TestDesignScopeCoversAerodynamicsAndStructure(t *testing.T) {
 		t.Error("単独区分が別の区分まで通している")
 	}
 }
+
+// 「公式サイトのみ」の目次に、後ろの節が付いてこないこと。
+//
+// 以前は公式サイトの見出しから**ファイル末尾まで**返していたため、出所が3つに
+// なったとき（M27）にフライトシミュレータのガイド全32ページが「公式サイトのみ」の
+// アシスタントへ渡っていた（2026-09-12に発見）。参照範囲そのものは inScope で
+// 効いているので資料は混ざらないが、回答プロンプトは「目次はページの有無や
+// 分野ごとの情報量の根拠にしてよい」と明記している。
+// **出所を足すたびに同じ壊れ方をしないこと。**
+func TestSiteTOCStopsAtNextOrigin(t *testing.T) {
+	toc := "# 基本情報\n\nWASAの説明\n" +
+		"\n## 引き継ぎWiki（部内限定）全114ページ\n- **電装班** 部内の話\n" +
+		"\n## 公式サイト（一般公開 wasa-birdman.com）全500ページ\n- **WASAについて知る** 団体紹介\n" +
+		"\n## フライトシミュレータのガイド（FlightEnvironmentEmulator）全32ページ\n- **FEEの使い方** ソフトの話\n"
+	ix := testIndexWithTOC(t, toc)
+	got := New(ix, &stubLLM{}).scopedTOC(&state.Assistant{Origin: "site"})
+
+	if !strings.Contains(got, "WASAについて知る") {
+		t.Fatalf("公式サイトの節が落ちている:\n%s", got)
+	}
+	if !strings.Contains(got, "WASAの説明") {
+		t.Fatalf("先頭の基本情報が落ちている:\n%s", got)
+	}
+	for _, leaked := range []string{"電装班", "フライトシミュレータ", "FEEの使い方"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("範囲外の %q が目次へ入っている:\n%s", leaked, got)
+		}
+	}
+}

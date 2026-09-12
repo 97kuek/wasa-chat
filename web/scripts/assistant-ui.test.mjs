@@ -84,3 +84,23 @@ test("アイコン画像は位置調整UIを持たず中央で切り抜く", () 
   assert.match(avatar, /const sourceX = \(bitmap\.width - side\) \/ 2;/);
   assert.match(avatar, /const sourceY = \(bitmap\.height - side\) \/ 2;/);
 });
+
+// 出所はサーバー側（assistant.origins）が正本。画面の選択肢が欠けていると、
+// サーバーは受け付けるのに画面から選べない状態になる（fee が実際そうだった）。
+test("参照範囲の選択肢はサーバーが受け付ける出所と揃える", () => {
+  const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
+  assert.match(api, /export type AssistantOrigin = "wiki" \| "site" \| "fee";/);
+  for (const value of ["wiki", "site", "fee"]) {
+    assert.match(form, new RegExp(`value: "${value}"`));
+  }
+  // 画面がunionを直書きすると、出所を足したときに拾い漏れる
+  assert.doesNotMatch(api, /origin\?: "wiki" \| "site"/);
+});
+
+// Wiki以外をまとめて「公式サイト」と表示していたため、フライトシミュレータの
+// 差分も公式サイトとして出ていた。
+test("管理画面の出所名はGoのOriginLabelと揃える", () => {
+  const admin = readFileSync(new URL("../src/admin/AdminPage.tsx", import.meta.url), "utf8");
+  assert.match(admin, /if \(source === "fee"\) return "フライトシミュレータ";/);
+  assert.doesNotMatch(admin, /source === "wiki" \? "Wiki" : "公式サイト"/);
+});

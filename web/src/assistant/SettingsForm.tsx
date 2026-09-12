@@ -69,10 +69,14 @@ function joinInstruction(parts: InstructionParts): string {
 /** 作成・編集・閲覧で同じ画面を使う。閲覧では入力を読み取り専用にするだけ。 */
 export type AssistantFormMode = "create" | "edit" | "view";
 
+// サーバー側（assistant.origins）が受け付ける出所と同じにすること。
+// フライトシミュレータは、サーバーが受け付けるのに**画面から選べない**状態だった
+// （2026-09-12に発見）。出所を足したらここも足す。
 const ORIGIN_OPTIONS: SelectOption[] = [
   { value: "", label: "すべて" },
   { value: "wiki", label: "引き継ぎWikiのみ" },
   { value: "site", label: "公式サイトのみ（部外に出せる情報だけ）" },
+  { value: "fee", label: "フライトシミュレータのガイドのみ" },
 ];
 
 type Props = {
