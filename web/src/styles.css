@@ -1188,15 +1188,6 @@ button:disabled {
   line-height: 1.4;
 }
 
-.answer-mode {
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface-soft);
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 500;
-}
 
 .assistant-content {
   min-width: 0;
@@ -1630,6 +1621,8 @@ button:disabled {
   padding: 4px 0;
 }
 
+/* KaTeXが描画時に自分で付けるクラス。**画面のコードからは参照されないが消さないこと。**
+   数式ブロックの左寄せはここでしか効かせられない */
 .katex-display {
   margin: 0;
   text-align: left;

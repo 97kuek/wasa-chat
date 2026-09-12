@@ -43,6 +43,14 @@ LINK_QUESTION_NOISE = (
 DEEP_QUESTION_PATTERN = re.compile(r"比較|違い|差異|変遷|歴代|全体|網羅|すべて|まとめ|傾向|なぜ|理由|背景|複数|どう変")
 RESPONSE_MODES = {"auto", "fast", "standard", "deep"}
 
+# 質問に実在ページ名が書かれていたときの優先順位。Go側と同じ値にすること。
+# **桁で段を分けてある。** 値そのものに意味はなく、大小関係だけが意味を持つ。
+#   世代と分野の両方が合う > 分野は合い世代つき > 分野だけ合う > その他
+SCORE_GENERATION_AND_FIELD = 2000
+SCORE_TITLE_WITH_GENERATION = 1500
+SCORE_TITLE_ONLY = 1000
+SCORE_WEAK_MATCH = 500
+
 
 def resolve_response_mode(mode: str, question: str) -> str:
     """Go側のresolveResponseModeと同じ規則で、自動モードを3段階へ解決する。"""
@@ -297,13 +305,13 @@ class Pipeline:
             if not direct and not parts:
                 continue
             if parts and base:
-                score = 2000
+                score = SCORE_GENERATION_AND_FIELD
             elif direct and generations:
-                score = 1500
+                score = SCORE_TITLE_WITH_GENERATION
             elif direct:
-                score = 1000
+                score = SCORE_TITLE_ONLY
             else:
-                score = 500
+                score = SCORE_WEAK_MATCH
             score += len(base) * 10 + len(normalized_title)
             ranked.append((-score, order, title))
         ranked.sort()

@@ -141,28 +141,15 @@ func pacificDay(at time.Time) string {
 	return at.In(location).Format("2006-01-02")
 }
 
-func main() {
-	// リポジトリ直下の .env を読む。測定用のPython側と同じ設定を使えるようにするため。
-	// 既に環境変数が設定されていればそちらが優先される
-	for _, path := range []string{".env", "../.env"} {
-		if err := godotenv.Load(path); err == nil {
-			log.Printf("設定を読み込み: %s", path)
-			break
-		}
-	}
-
-	ix, source, err := loadIndex()
-	if err != nil {
-		log.Fatalf("インデックスを読み込めません（%s）: %v\n"+
-			"先に python build_index.py && python build_toc.py を実行してください", source, err)
-	}
-	pages, chunks := ix.Stats()
-	log.Printf("インデックス読み込み完了（%s）: %dページ / %dチャンク / 目次%d字",
-		source, pages, chunks, len([]rune(ix.TOC)))
-
+// newLLMClient は LLM_PROVIDER に応じたクライアントを作る。
+//
+// Gemini のときだけ具象型も返すのは、**無料枠の残量推定と停止状態が
+// Gemini固有**だからである（管理画面の表示と、送信前の記録に使う）。
+// ここで nil を返す構成では、それらの機能が静かに無効になる。
+func newLLMClient() (llm.Client, *llm.Gemini) {
+	provider := env("LLM_PROVIDER", "ollama")
 	var client llm.Client
 	var geminiClient *llm.Gemini
-	provider := env("LLM_PROVIDER", "ollama")
 	switch provider {
 	case "claude":
 		client = llm.NewClaude(os.Getenv("CLAUDE_MODEL"))
@@ -202,12 +189,15 @@ func main() {
 			env("OLLAMA_MODEL", "qwen3:30b-a3b"),
 		)
 	}
-	log.Printf("モデル: %s", client.Name())
+	return client, geminiClient
+}
 
-	// 認証はWikiのアカウントに委ねる。共有パスワードを配らずに済み、
-	// 利用者名が取れるのでレート制限を個人ごとに分けられる（docs/01-設計方針.md §8-1）
-	wikiAPI := env("WIKI_API", "https://wasabirdman.sakura.ne.jp/wbwiki/w/api.php")
-
+// sessionSecret はCookie署名の鍵を用意する。
+//
+// ⚠️ **本番では固定値が必須。** 変えると全員がログアウトするだけでなく、
+// HMAC利用者キーも変わるため、当日の利用回数とチャット履歴を参照できなくなる
+// （docs/09 D-2）。手元では未設定でも起動するが、再起動のたびに別人になる。
+func sessionSecret() string {
 	secret := os.Getenv("SESSION_SECRET")
 	if secret == "" {
 		if os.Getenv("K_SERVICE") != "" {
@@ -223,11 +213,16 @@ func main() {
 	} else if len(secret) < 32 {
 		log.Fatal("SESSION_SECRETは32文字以上で設定してください")
 	}
-	allowOrigin := os.Getenv("ALLOW_ORIGIN")
-	if os.Getenv("K_SERVICE") != "" && allowOrigin == "" {
-		log.Fatal("Cloud RunではCloudflare PagesのURLをALLOW_ORIGINに設定してください")
-	}
+	return secret
+}
 
+// newStateStore は履歴・利用回数・アシスタントの保存先を用意する。
+//
+// 手元ではメモリ、本番ではFirestore。**Cloud Runでメモリに落ちないようにする。**
+// 落ちると、再起動のたびに履歴と当日の回数が消える状態で動き続けてしまう。
+// 3つ目の戻り値は後片付け（メモリのときは何もしない）。
+func newStateStore() (appstate.Store, string, func()) {
+	closer := func() error { return nil }
 	sharedState := appstate.Store(appstate.NewMemory())
 	storeName := "メモリ（ローカル）"
 	if projectID := os.Getenv("FIRESTORE_PROJECT_ID"); projectID != "" {
@@ -235,7 +230,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Firestoreへ接続できません: %v", err)
 		}
-		defer firestoreState.Close()
+		closer = firestoreState.Close
 		sharedState = firestoreState
 		storeName = "Firestore"
 		log.Printf("共有状態: Firestore（project=%s）", projectID)
@@ -244,6 +239,47 @@ func main() {
 	} else {
 		log.Println("共有状態: メモリ（ローカル開発用。再起動で履歴と利用回数が消えます）")
 	}
+	return sharedState, storeName, func() {
+		if err := closer(); err != nil {
+			log.Printf("保存先の後片付けに失敗: %v", err)
+		}
+	}
+}
+
+func main() {
+	// リポジトリ直下の .env を読む。測定用のPython側と同じ設定を使えるようにするため。
+	// 既に環境変数が設定されていればそちらが優先される
+	for _, path := range []string{".env", "../.env"} {
+		if err := godotenv.Load(path); err == nil {
+			log.Printf("設定を読み込み: %s", path)
+			break
+		}
+	}
+
+	ix, source, err := loadIndex()
+	if err != nil {
+		log.Fatalf("インデックスを読み込めません（%s）: %v\n"+
+			"先に python build_index.py && python build_toc.py を実行してください", source, err)
+	}
+	pages, chunks := ix.Stats()
+	log.Printf("インデックス読み込み完了（%s）: %dページ / %dチャンク / 目次%d字",
+		source, pages, chunks, len([]rune(ix.TOC)))
+
+	client, geminiClient := newLLMClient()
+	log.Printf("モデル: %s", client.Name())
+
+	// 認証はWikiのアカウントに委ねる。共有パスワードを配らずに済み、
+	// 利用者名が取れるのでレート制限を個人ごとに分けられる（docs/01-設計方針.md §8-1）
+	wikiAPI := env("WIKI_API", "https://wasabirdman.sakura.ne.jp/wbwiki/w/api.php")
+
+	secret := sessionSecret()
+	allowOrigin := os.Getenv("ALLOW_ORIGIN")
+	if os.Getenv("K_SERVICE") != "" && allowOrigin == "" {
+		log.Fatal("Cloud RunではCloudflare PagesのURLをALLOW_ORIGINに設定してください")
+	}
+
+	sharedState, storeName, closeState := newStateStore()
+	defer closeState()
 	if geminiClient != nil {
 		geminiClient.SetAttemptObserver(func(_ context.Context, attempt llm.APIAttempt) {
 			// 利用者の接続が切れても、すでにGeminiへ送った1回は無料枠から減る。

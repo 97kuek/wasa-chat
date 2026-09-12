@@ -175,6 +175,19 @@ var chunkSchema = json.RawMessage(`{"type":"object","properties":{"ids":{"type":
 // 型番は目次のリード文や上位見出しに現れないことがある。実際に「TR797とは」で
 // 直接定義する正解チャンクがBM25の227位となり、「資料に記載なし」と誤答した。一方で B1 や
 // 40th まで拾うと候補が増えすぎるため、英字で始まり数字を含む4文字以上に限る。
+// 質問に実在ページ名が書かれていたときの優先順位。**桁で段を分けてある。**
+// 値そのものに意味はなく、大小関係だけが意味を持つ（下の加点で段をまたがない幅）。
+//
+//	世代と分野の両方が合う > 分野は合い世代つき > 分野だけ合う > その他
+//
+// 「41stの空力設計」に対して、世代まとめページより「空力設計(41st)」を先に出すため。
+const (
+	scoreGenerationAndField  = 2000
+	scoreTitleWithGeneration = 1500
+	scoreTitleOnly           = 1000
+	scoreWeakMatch           = 500
+)
+
 var identifierPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9_-]*[0-9][A-Za-z0-9_-]*`)
 var generationOrdinalPattern = regexp.MustCompile(`(?i)([0-9]+)(?:st|nd|rd|th)`)
 var generationLabelPattern = regexp.MustCompile(`[0-9]+代`)
@@ -701,15 +714,17 @@ func directTitlePages(ix *index.Index, question string, a *state.Assistant) []*i
 		if !direct && !parts {
 			continue
 		}
-		score := 500
+		score := scoreWeakMatch
 		switch {
 		case parts && base != "":
-			score = 2000 // 世代と分野の両方が合うページを世代まとめより優先する。
+			score = scoreGenerationAndField
 		case direct && len(generations) > 0:
-			score = 1500
+			score = scoreTitleWithGeneration
 		case direct:
-			score = 1000
+			score = scoreTitleOnly
 		}
+		// 同じ段のページは、分野名が長いほど具体的とみなす。桁を分けてあるので
+		// この加点で段をまたぐことはない
 		score += len([]rune(base))*10 + len([]rune(title))
 		ranked = append(ranked, scored{page: pg, score: score, order: order})
 	}
