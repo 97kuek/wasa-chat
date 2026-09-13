@@ -35,13 +35,20 @@ DriveのACLではなくWikiアカウントが境界である。docs/09 A-10 に�
 
 取れるもの・取れないもの
 ------------------------
-Googleドキュメント・スライドは files.export でテキストになる。PDFは本文を
-そのまま落として抽出する。**以下は取れない**ので、索引にも入らない:
+  Googleドキュメント・スライド  files.export でテキストになる
+  Googleスプレッドシート        files.export でCSV。**先頭シートだけ**
+  PDF                          本文を落として pypdf で抽出
+  Word / Excel / PowerPoint    本文を落として**手元で解析する**
 
-  - スプレッドシート（CSVエクスポートは先頭シートだけ。複数シートを扱うなら
-    XLSXの解析が要るので、要ると分かってから足す）
+⚠️ **Office形式をDrive側で変換しない。** 変換するには「Googleドキュメントへ
+コピー」する必要があり、書き込み権限が要る。読み取り専用のままにしておきたいので、
+ZIP+XMLを手元で開く（python-docx / openpyxl / python-pptx）。
+
+**以下は取れない**ので、索引にも入らない:
+
   - 画像だけのPDF（OCRが要る）
-  - スライドの発表者ノート、図の中の文字、コメント
+  - 図の中の文字、コメント、スライドの発表者ノート
+  - 旧形式の .doc / .xls（ZIPではないので同じ方法で開けない）
 
 **取れなかったものは黙って捨てず、最後に件数と理由を出す。** 「入っているはず
 なのに答えない」を、後から追える形にしておく（docs/01 §5-1）。
@@ -80,8 +87,22 @@ GOOGLE_SHEET = "application/vnd.google-apps.spreadsheet"
 GOOGLE_FOLDER = "application/vnd.google-apps.folder"
 GOOGLE_SHORTCUT = "application/vnd.google-apps.shortcut"
 PDF = "application/pdf"
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
-SUPPORTED = {GOOGLE_DOC: "文書", GOOGLE_SLIDE: "スライド", PDF: "PDF"}
+SUPPORTED = {
+    GOOGLE_DOC: "文書",
+    GOOGLE_SLIDE: "スライド",
+    GOOGLE_SHEET: "表",
+    PDF: "PDF",
+    DOCX: "文書",
+    XLSX: "表",
+    PPTX: "スライド",
+}
+
+# 表から取り込む行数の上限。集計表を丸ごと入れても回答には使えず、目次だけが太る
+MAX_SHEET_ROWS = 200
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
@@ -210,24 +231,102 @@ def export_text(service, entry: dict) -> str:
     if mime in (GOOGLE_DOC, GOOGLE_SLIDE):
         data = service.files().export(fileId=entry["id"], mimeType="text/plain").execute()
         return data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
-    if mime == PDF:
-        return pdf_text(service, entry)
+    if mime == GOOGLE_SHEET:
+        # ⚠️ **CSVのエクスポートは先頭シートだけ。** 複数シートの表は取りこぼす
+        data = service.files().export(fileId=entry["id"], mimeType="text/csv").execute()
+        text = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
+        return "\n".join(text.splitlines()[:MAX_SHEET_ROWS])
+    if mime in (PDF, DOCX, XLSX, PPTX):
+        return from_bytes(mime, download(service, entry["id"]))
     return ""
 
 
-def pdf_text(service, entry: dict) -> str:
-    """PDFを落としてテキストを抜く。画像だけのPDFは空になる（OCRはしない）。"""
+def download(service, file_id: str) -> bytes:
+    return service.files().get_media(fileId=file_id, supportsAllDrives=True).execute()
+
+
+def from_bytes(mime: str, data: bytes) -> str:
+    """落としたファイルからテキストを抜く。開けなければ空文字。
+
+    ⚠️ **壊れたファイルで全体を止めない。** 1つのPDFが壊れているせいで
+    155件の取り込みが失敗しては困る。件数と理由は最後にまとめて出る。
+    """
     try:
-        from pypdf import PdfReader
-    except ImportError:
+        if mime == PDF:
+            return pdf_text(data)
+        if mime == DOCX:
+            return docx_text(data)
+        if mime == XLSX:
+            return xlsx_text(data)
+        if mime == PPTX:
+            return pptx_text(data)
+    except Exception:  # noqa: BLE001 — 壊れた・暗号化された・想定外の中身
         return ""
-    data = service.files().get_media(fileId=entry["id"], supportsAllDrives=True).execute()
-    try:
-        reader = PdfReader(io.BytesIO(data))
-        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
-    except Exception:
-        # 壊れたPDF・暗号化されたPDF。件数は最後に出るので黙って消えはしない
-        return ""
+    return ""
+
+
+def pdf_text(data: bytes) -> str:
+    """画像だけのPDFは空になる（OCRはしない）。"""
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(data))
+    return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def docx_text(data: bytes) -> str:
+    """段落と表の中身を拾う。**表を落とすと諸元表が消える。**"""
+    import docx
+
+    document = docx.Document(io.BytesIO(data))
+    parts = [p.text for p in document.paragraphs]
+    for table in document.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells]
+            if any(cells):
+                parts.append(" | ".join(cells))
+    return "\n".join(parts)
+
+
+def xlsx_text(data: bytes) -> str:
+    """**全シート**を読む。CSVエクスポートと違って先頭シートだけにならない。
+
+    数式ではなく計算結果を読む（data_only=True）。数式のまま入れても回答に使えない。
+    """
+    import openpyxl
+
+    book = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+    parts = []
+    for sheet in book.worksheets:
+        rows = []
+        for row in sheet.iter_rows(max_row=MAX_SHEET_ROWS, values_only=True):
+            cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
+            if cells:
+                rows.append(" | ".join(cells))
+        if rows:
+            parts.append(f"== {sheet.title} ==\n" + "\n".join(rows))
+    book.close()
+    return "\n\n".join(parts)
+
+
+def pptx_text(data: bytes) -> str:
+    """スライドごとに、図形の中の文字と表を拾う。発表者ノートは取らない。"""
+    from pptx import Presentation
+
+    deck = Presentation(io.BytesIO(data))
+    parts = []
+    for number, slide in enumerate(deck.slides, 1):
+        lines = []
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.text_frame.text.strip():
+                lines.append(shape.text_frame.text.strip())
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    cells = [c.text.strip() for c in row.cells]
+                    if any(cells):
+                        lines.append(" | ".join(cells))
+        if lines:
+            parts.append(f"== スライド{number} ==\n" + "\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def tidy(text: str) -> str:
@@ -267,7 +366,12 @@ def main() -> int:
 
         text = tidy(export_text(service, entry))
         if len(text) < MIN_CHARS:
-            reason = "PDFから文字を抜けない（画像だけの可能性）" if mime == PDF else "本文がほぼ空"
+            reason = {
+                PDF: "PDFから文字を抜けない（画像だけの可能性）",
+                DOCX: "Wordから文字を抜けない（壊れている可能性）",
+                XLSX: "Excelから文字を抜けない",
+                PPTX: "PowerPointから文字を抜けない",
+            }.get(mime, "本文がほぼ空")
             skipped[reason] = skipped.get(reason, 0) + 1
             continue
 
@@ -294,7 +398,7 @@ def main() -> int:
 
     total = sum(len(r["text"]) for r in records)
     print(f"\n{OUT} に {len(records)} ファイル / 計 {total:,} 字を書き出した")
-    for kind in SUPPORTED.values():
+    for kind in dict.fromkeys(SUPPORTED.values()):
         group = [r for r in records if r["kind"] == kind]
         if group:
             print(f"  {kind}: {len(group)}件 / 1件平均 {sum(len(r['text']) for r in group) // len(group):,}字")

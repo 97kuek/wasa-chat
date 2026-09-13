@@ -20,9 +20,15 @@ WORKDIR /app
 # ⚠️ **鍵（JSON）は作らない。** このJobに割り当てたサービスIDで認証する
 # （Application Default Credentials）。鍵が無ければ漏れない（docs/09 A-10）。
 #
-# pypdf はPDFから文字を抜くため。画像だけのPDFは抜けない（OCRはしない）
+# 本文を抜くための解析器。⚠️ **Drive側で変換しない。** Office形式をGoogle形式へ
+# 変換するには書き込み権限が要るので、読み取り専用のまま手元でZIP+XMLを開く。
+#   pypdf       PDF（画像だけのPDFは抜けない。OCRはしない）
+#   python-docx Word（段落と表。表を落とすと諸元表が消える）
+#   openpyxl    Excel（全シート。CSVエクスポートは先頭シートだけになる）
+#   python-pptx PowerPoint（図形の中の文字と表。発表者ノートは取らない）
 RUN pip install --no-cache-dir requests python-dotenv google-cloud-storage \
-    google-api-python-client google-auth pypdf
+    google-api-python-client google-auth \
+    pypdf python-docx openpyxl python-pptx
 
 # 取得・索引作成に必要なものだけを入れる。web/ や backend/ は要らない
 COPY dump_wiki.py dump_site.py dump_fee.py dump_drive.py build_index.py build_toc.py \
