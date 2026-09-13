@@ -331,6 +331,12 @@ def publish(location: str) -> None:
     # 新しい世代を記録するため**次の更新まで混ざったまま**になる。
     # index.json を最後に置けば、目次は必ず先に揃っている（2026-09-12にCodexが指摘）。
     for path in (TOC, MANIFEST, INDEX):
+        # ⚠️ **無いものは触らない。** `--only` で取り直したときは基準（sources.json）を
+        # 進めないので、手元にファイルが無い。公開中のものをそのまま残す
+        # （消したり空で上書きしたりすると、次回が全件取り直しになる）
+        if not path.exists():
+            print(f"据え置き: {path.name}（今回は作り直していません）")
+            continue
         name = f"{prefix}/{path.name}" if prefix else path.name
         bucket.blob(name).upload_from_filename(path)
         print(f"差し替え: gs://{bucket_name}/{name}")
@@ -381,7 +387,8 @@ def main() -> int:
             for problem in problems:
                 print(f"  - {problem}", file=sys.stderr)
             return 1
-        # **基準は進めない。** 取り直しただけで公開元が変わったわけではない
+        # **基準（sources.json）は進めない。** 取り直しただけで公開元が
+        # 変わったわけではない。publish は手元に無いファイルを飛ばす
         publish(location)
         return 0
     if current is None or previous is None:
