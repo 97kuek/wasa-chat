@@ -58,9 +58,11 @@ func (s *Server) mayUseDrive(ctx context.Context, user string) bool {
 	if user == "" {
 		return false
 	}
-	if s.isAdmin(ctx, user) {
-		return true
+	if s.isOwner(user) {
+		return true // 主管理者は設定に書いてある。保存先を見るまでもない
 	}
+	// **読み取りは1回にまとめる。** 共同管理者かどうかも参照先の許可も同じ文書に
+	// 入っているので、isAdmin を経由すると同じ文書を2回読むことになる
 	role, ok, err := s.state.GetAdminRole(ctx, s.userKey(user))
 	if err != nil {
 		// **読めないときは許可しない。** 失敗を「許可」に倒すと、
@@ -71,7 +73,8 @@ func (s *Server) mayUseDrive(ctx context.Context, user string) bool {
 	if !ok || role.Username != user {
 		return false
 	}
-	return slices.Contains(role.Tools, pipeline.ToolDrive)
+	// 管理者は共有フォルダの中身を決める側なので、指定しなくても読める
+	return role.Role == "co_admin" || slices.Contains(role.Tools, pipeline.ToolDrive)
 }
 
 // allowedTools は画面から届いた参照先のうち、**サーバー側で使えるものだけ**を返す。
@@ -231,20 +234,15 @@ func (s *Server) searchableGuilds(ctx context.Context) []discord.Guild {
 
 // searchableChannels は画面から読んでよいチャンネルを返す。
 func (s *Server) searchableChannels(ctx context.Context, guildID string) []discord.Channel {
-	open := discord.ScopeChoices(ctx, s.cfg.DiscordBotToken, guildID, "")
-	allowList := map[string]bool{}
-	for _, id := range s.cfg.DiscordSearchChannels {
-		allowList[id] = true
+	open := discord.PublicChannels(ctx, s.cfg.DiscordBotToken, guildID)
+	if len(s.cfg.DiscordSearchChannels) == 0 {
+		return open
 	}
 	channels := make([]discord.Channel, 0, len(open))
-	for _, choice := range open {
-		if choice.Value == discord.ScopeAllChannels {
-			continue
+	for _, channel := range open {
+		if slices.Contains(s.cfg.DiscordSearchChannels, channel.ID) {
+			channels = append(channels, channel)
 		}
-		if len(allowList) > 0 && !allowList[choice.Value] {
-			continue
-		}
-		channels = append(channels, discord.Channel{ID: choice.Value, Name: strings.TrimPrefix(choice.Name, "#")})
 	}
 	return channels
 }

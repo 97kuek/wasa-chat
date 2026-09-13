@@ -58,6 +58,41 @@ DUMP = ROOT / "dump"
 # 索引と同じ非公開バケットへ置く（中身は索引に入っているものと同じ）
 DUMP_FILES = ("pages.jsonl", "site.jsonl", "fee.jsonl", "drive.jsonl", "images.json")
 
+# 生データのファイルと、それを作る出所の対応。
+# images.json はWikiの添付一覧なので wiki が作る。
+DUMP_OWNER = {
+    "pages.jsonl": "wiki",
+    "images.json": "wiki",
+    "site.jsonl": "site",
+    "fee.jsonl": "fee",
+    "drive.jsonl": "drive",
+}
+
+# 出所と、その取得スクリプト。
+#
+# ⚠️ **出所を足すときはここだけを直す。** 以前は「全部取り直す」ときの集合を
+# 別に書いており、共有ドライブを足したときに**そこだけ更新し忘れて、全部取り直す
+# 経路でDriveが黙って飛ばされた**（2026-09-13に本番のログで発覚）。
+# 取得の実行も、取り直す範囲の判定も、この表から導く。
+SOURCES = (
+    ("wiki", "Wikiを取得", "dump_wiki.py"),
+    ("site", "公式サイトを取得", "dump_site.py"),
+    ("fee", "フライトシミュレータのガイドを取得", "dump_fee.py"),
+    ("drive", "共有ドライブを取得", "dump_drive.py"),
+)
+
+
+def all_sources() -> set[str]:
+    """取り直しうる出所。設定していないものは含めない。
+
+    共有ドライブは DRIVE_FOLDER_IDS が要る。未設定のまま取りに行くと、
+    dump_drive.py が「設定してください」で止まり、**Wikiの更新まで公開できなくなる**。
+    """
+    names = {key for key, _, _ in SOURCES}
+    if not os.getenv("DRIVE_FOLDER_IDS", "").strip():
+        names.discard("drive")
+    return names
+
 # 取得の失敗を公開しないための下限。publish-index.sh と同じ値にすること
 MIN_PAGES = 100
 # ある出所のページ数がここまで減っていたら、取得が壊れたとみなす
@@ -140,8 +175,12 @@ def drive_snapshot() -> dict:
         seen: set[str] = set()
         found: dict[str, str] = {}
         for folder in dump_drive.folder_ids():
+            # ⚠️ **読めないフォルダを「変更なし」にしない。** files.list は権限が
+            # 無い親でも空を返すので、確かめないと共有設定の忘れに気づけない
+            dump_drive.check_access(service, folder)
             for entry in dump_drive.walk(service, folder, seen):
                 found[entry["id"]] = entry.get("modifiedTime", "")
+        print(f"共有ドライブ: {len(found)} 件のファイルが見えています")
         return found
     except Exception as error:  # noqa: BLE001 — 外部API。落ちても全体は止めない
         print(f"共有ドライブの一覧を取れませんでした（変更なしとして続けます）: {error}")
@@ -185,13 +224,7 @@ def rebuild(sources: set[str]) -> None:
     Wikiを直しただけで公式サイトを取り直すのは、**待ち時間のほぼ全部が無駄**になる。
     古い取得結果と新しい取得結果を混ぜた索引を作らないため、1つでも失敗したら止める。
     """
-    steps = [
-        ("wiki", "Wikiを取得", "dump_wiki.py"),
-        ("site", "公式サイトを取得", "dump_site.py"),
-        ("fee", "フライトシミュレータのガイドを取得", "dump_fee.py"),
-        ("drive", "共有ドライブを取得", "dump_drive.py"),
-    ]
-    for key, label, script in steps:
+    for key, label, script in SOURCES:
         if key not in sources:
             print(f"--- {label}: 変更なしのため省略 ---", flush=True)
             continue
@@ -235,11 +268,27 @@ def safe_to_publish(before: dict | None, after: dict) -> list[str]:
     return problems
 
 
-def pull_dumps(location: str) -> bool:
-    """前回の取得結果を取り寄せる。揃わなければ False（全部取り直す）。"""
+def pull_dumps(location: str) -> set[str]:
+    """前回の取得結果を取り寄せ、**足りなかった出所**を返す。
+
+    ⚠️ **1つ足りないだけで全部取り直さない。** 出所を足した直後は、その出所の
+    生データだけが保存されていない。それで「揃わない」と判断すると、Wikiと
+    公式サイトを11分かけて取り直すことになる（2026-09-13に実際に起きた）。
+    足りないものだけを取り直せばよい。
+
+    どの出所にも属さないファイル（images.json）が欠けたときは、Wikiを取り直す。
+    """
     DUMP.mkdir(exist_ok=True)
+    missing: set[str] = set()
+
+    def note(name: str) -> None:
+        missing.add(DUMP_OWNER.get(name, "wiki"))
+
     if not location.startswith("gs://"):
-        return all((DUMP / name).exists() for name in DUMP_FILES)
+        for name in DUMP_FILES:
+            if not (DUMP / name).exists():
+                note(name)
+        return missing
 
     from google.cloud import storage
 
@@ -249,9 +298,10 @@ def pull_dumps(location: str) -> bool:
     for name in DUMP_FILES:
         blob = bucket.blob(f"{prefix}/dump/{name}" if prefix else f"dump/{name}")
         if not blob.exists():
-            return False
+            note(name)
+            continue
         blob.download_to_filename(DUMP / name)
-    return True
+    return missing
 
 
 def publish(location: str) -> None:
@@ -297,13 +347,13 @@ def main() -> int:
     current = published(location, "index.json")
     previous = published(location, "sources.json")
     snapshot = remote_snapshot()
-    all_sources = {"wiki", "site", "fee"}
+    every = all_sources()
     if current is None or previous is None:
         print("公開中の索引か取得一覧がありません。初回として全部取り直します。")
-        changed = all_sources
+        changed = every
     else:
         print(f"公開中の索引: {len(current['pages'])}ページ（{dict(source_counts(current))}）")
-        changed = all_sources if args.force else changed_since(previous, snapshot)
+        changed = every if args.force else changed_since(previous, snapshot)
 
     if not changed:
         print("公開元の変更はありません。何もしません。")
@@ -312,10 +362,10 @@ def main() -> int:
         print(f"変更のあった出所: {sorted(changed)}（--check-only のため取得しません）。")
         return 2
 
-    # 前回の取得結果が揃わなければ、部分取得はできない
-    if not pull_dumps(location):
-        print("前回の取得結果が揃いません。全部取り直します。")
-        changed = all_sources
+    # 前回の取得結果のうち、足りないものは取り直す（全部ではない）
+    if missing := pull_dumps(location) & every:
+        print(f"前回の取得結果が無い出所: {sorted(missing)}")
+        changed = changed | missing
     print(f"取り直す出所: {sorted(changed)}")
     rebuild(changed)
     # **取得の直前に見た公開元**を次回の基準として残す。取得後に残ったものではない

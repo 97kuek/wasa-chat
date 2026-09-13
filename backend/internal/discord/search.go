@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -68,20 +69,27 @@ func Search(ctx context.Context, botToken, guildID, query string, allowed []Chan
 
 	hits := make([]Message, 0, len(payload.Messages))
 	for _, group := range payload.Messages {
-		for _, message := range group {
-			// 組の中で hit が立っているものが本体。立っていなければ先頭を使う
-			if message.Hit {
-				hits = append(hits, message)
-				break
-			}
-		}
-		if len(hits) == 0 || !hits[len(hits)-1].Hit {
-			if len(group) > 0 {
-				hits = append(hits, group[0])
-			}
+		if hit, ok := pickHit(group); ok {
+			hits = append(hits, hit)
 		}
 	}
 	return withContext(ctx, f, hits, names)
+}
+
+// pickHit は検索結果の1組から、実際に一致した1件を取り出す。
+//
+// Discordは「ヒットとその前後」を組で返す。組の中で `hit` が立っているものが本体で、
+// 立っていなければ（仕様変更などで）先頭を使う。
+func pickHit(group []Message) (Message, bool) {
+	for _, message := range group {
+		if message.Hit {
+			return message, true
+		}
+	}
+	if len(group) > 0 {
+		return group[0], true
+	}
+	return Message{}, false
 }
 
 // withContext はヒットの前後を取って、チャンネルごとの会話へ組み直す。
@@ -113,10 +121,13 @@ func withContext(ctx context.Context, f *fetcher, hits []Message, names map[stri
 	logs := make([]ChannelLog, 0, len(byChannel))
 	for channelID, messages := range byChannel {
 		// Gather と同じく「新しい順」で持つ。Transcript が並べ直す
-		sortNewestFirst(messages)
+		sort.Slice(messages, func(a, b int) bool {
+			return messages[a].Timestamp.After(messages[b].Timestamp)
+		})
 		logs = append(logs, ChannelLog{Channel: names[channelID], Messages: messages})
 	}
-	sortByChannelName(logs)
+	// 見出しの順を毎回同じにする。走るたびに並びが変わると差分が読めない
+	sort.Slice(logs, func(a, b int) bool { return logs[a].Channel < logs[b].Channel })
 	return logs, nil
 }
 
@@ -128,22 +139,6 @@ func around(ctx context.Context, f *fetcher, channelID, messageID string) ([]Mes
 		return nil, err
 	}
 	return page, nil
-}
-
-func sortNewestFirst(messages []Message) {
-	for i := 1; i < len(messages); i++ {
-		for j := i; j > 0 && messages[j].Timestamp.After(messages[j-1].Timestamp); j-- {
-			messages[j], messages[j-1] = messages[j-1], messages[j]
-		}
-	}
-}
-
-func sortByChannelName(logs []ChannelLog) {
-	for i := 1; i < len(logs); i++ {
-		for j := i; j > 0 && logs[j].Channel < logs[j-1].Channel; j-- {
-			logs[j], logs[j-1] = logs[j-1], logs[j]
-		}
-	}
 }
 
 // SearchScope は画面へ出す「何を読んだか」の説明。

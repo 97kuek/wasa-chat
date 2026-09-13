@@ -14,11 +14,18 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# 取得と索引作成に要るものだけ。評価スクリプトの依存は入れない
-RUN pip install --no-cache-dir requests python-dotenv google-cloud-storage
+# 取得と索引作成に要るものだけ。評価スクリプトの依存は入れない。
+#
+# google-api-python-client / google-auth は共有ドライブの取得用。
+# ⚠️ **鍵（JSON）は作らない。** このJobに割り当てたサービスIDで認証する
+# （Application Default Credentials）。鍵が無ければ漏れない（docs/09 A-10）。
+#
+# pypdf はPDFから文字を抜くため。画像だけのPDFは抜けない（OCRはしない）
+RUN pip install --no-cache-dir requests python-dotenv google-cloud-storage \
+    google-api-python-client google-auth pypdf
 
 # 取得・索引作成に必要なものだけを入れる。web/ や backend/ は要らない
-COPY dump_wiki.py dump_site.py dump_fee.py build_index.py build_toc.py \
+COPY dump_wiki.py dump_site.py dump_fee.py dump_drive.py build_index.py build_toc.py \
      check_updates.py facts.md ./
 COPY tools/auto_update.py ./tools/
 

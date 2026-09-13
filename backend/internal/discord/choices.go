@@ -55,6 +55,18 @@ func ScopeChoices(ctx context.Context, botToken, guildID, typed string) []Choice
 	return choices
 }
 
+// PublicChannels はそのサーバーの公開チャンネルを返す。
+//
+// ScopeChoices（補完の候補）と同じ一覧を使う。**候補の表示名から復元しない。**
+// 表示用に付けた `#` を剥がして構造体へ戻す作りだと、表示を変えた瞬間に
+// 読む先が壊れる（2026-09-13のリファクタリングで解消）。
+func PublicChannels(ctx context.Context, botToken, guildID string) []Channel {
+	if botToken == "" || guildID == "" {
+		return nil
+	}
+	return cachedPublicChannels(ctx, botToken, guildID)
+}
+
 func cachedPublicChannels(ctx context.Context, botToken, guildID string) []Channel {
 	channelCacheMu.Lock()
 	if hit, ok := channelCache[guildID]; ok && time.Since(hit.at) < channelCacheTTL {

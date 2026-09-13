@@ -83,9 +83,6 @@ PDF = "application/pdf"
 
 SUPPORTED = {GOOGLE_DOC: "文書", GOOGLE_SLIDE: "スライド", PDF: "PDF"}
 
-# 目次の粒度を分けるための呼び名。build_index.py の kind に入る
-KIND_LABEL = "共有ドライブ"
-
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
@@ -107,6 +104,64 @@ def build_service():
     credentials, _ = default(scopes=SCOPES)
     # cache_discovery=False にしないと、書き込めない環境で警告が出る
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
+
+def check_access(service, folder_id: str) -> str:
+    """フォルダを読めるか確かめ、名前を返す。読めなければ例外。
+
+    ⚠️ **黙って0件にしない。** Drive の `files.list` は、権限が無い親を指定しても
+    403ではなく**空の一覧**を返す。そのため共有設定を忘れていると、
+    「フォルダは空でした」と同じ見え方になり、原因にたどり着けない
+    （2026-09-13に実際にそうなった）。先に1回だけ取りに行って区別する。
+    """
+    from googleapiclient.errors import HttpError
+
+    try:
+        found = service.files().get(
+            fileId=folder_id, fields="id,name,mimeType", supportsAllDrives=True,
+        ).execute()
+    except HttpError as error:
+        if error.status_code in (403, 404):
+            raise SystemExit(
+                f"フォルダ {folder_id} を読めません（{error.status_code}）。\n"
+                f"このサービスアカウントを共有相手に追加してください:\n"
+                f"  {service_account_email()}"
+            ) from error
+        raise
+    if found.get("mimeType") != GOOGLE_FOLDER:
+        raise SystemExit(f"{folder_id} はフォルダではありません（{found.get('mimeType')}）")
+    return found.get("name", folder_id)
+
+
+def service_account_email() -> str:
+    """いま動いているサービスアカウントのアドレス。
+
+    ⚠️ **Cloud Run 上では credentials.service_account_email が "default" になる。**
+    メタデータサーバーから取った資格情報は、自分の名前を知らないまま使える。
+    共有相手に追加してもらうには実際のアドレスが要るので、メタデータサーバーへ
+    聞きに行く（2026-09-13に "default" と表示されて分からなくなった）。
+    """
+    try:
+        import urllib.request
+
+        request = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+            headers={"Metadata-Flavor": "Google"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return response.read().decode().strip()
+    except Exception:  # noqa: BLE001 — 手元で動かしているときは取れない
+        pass
+    try:
+        from google.auth import default
+
+        credentials, _ = default(scopes=SCOPES)
+        email = getattr(credentials, "service_account_email", "")
+        if email and email != "default":
+            return email
+    except Exception:  # noqa: BLE001
+        pass
+    return "（このJobのサービスアカウント）"
 
 
 def walk(service, folder_id: str, seen: set[str]) -> list[dict]:
@@ -192,7 +247,10 @@ def main() -> int:
     seen: set[str] = set()
     entries: list[dict] = []
     for folder in folder_ids():
-        entries.extend(walk(service, folder, seen))
+        name = check_access(service, folder)
+        found = walk(service, folder, seen)
+        print(f"フォルダ「{name}」: {len(found)} 件")
+        entries.extend(found)
 
     # 同じファイルが複数のフォルダから見えることがある。IDで1回にする
     unique = {entry["id"]: entry for entry in entries}

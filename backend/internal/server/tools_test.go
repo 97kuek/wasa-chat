@@ -220,3 +220,23 @@ func TestRevokingCoAdminKeepsToolGrant(t *testing.T) {
 		t.Fatal("空の文書が残っている")
 	}
 }
+
+// 共同管理者も共有フォルダの中身を決める側なので、指定しなくても読める。
+// **読み取りは1回にまとめる**（同じ文書に両方入っているため）
+func TestCoAdminMayUseDrive(t *testing.T) {
+	srv := toolServer(t, true)
+	if err := srv.state.SaveAdminRole(t.Context(), srv.userKey("部員A"), state.AdminRole{
+		Username: "部員A", Role: "co_admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !srv.mayUseDrive(t.Context(), "部員A") {
+		t.Fatal("共同管理者が共有ドライブを使えない")
+	}
+	if !srv.mayUseDrive(t.Context(), "主管理者") {
+		t.Fatal("主管理者が共有ドライブを使えない")
+	}
+	if srv.mayUseDrive(t.Context(), "部員B") {
+		t.Fatal("許可していない利用者を通した")
+	}
+}

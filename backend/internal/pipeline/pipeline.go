@@ -498,6 +498,12 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 	// 早く出すためのもので、こちらが確定版
 	emit(Event{Type: "pages", Pages: sources})
 
+	// ⚠️ **何を読んだかを画面にも出す。** Discordの会話は索引のページではないので
+	// 出典カードに出せない。ここで伝えないと、**部員の発言を根拠に答えたことが
+	// 誰にも分からない**（Discord側の `/要約` は回答の先頭に同じ説明を出している）
+	if sc.DiscordNote != "" {
+		emit(Event{Type: "status", Message: sc.DiscordNote})
+	}
 	emit(Event{Type: "status", Message: "回答を作成しています"})
 	answerStarted := time.Now()
 	_, err = p.llm.Stream(ctx, llm.Request{

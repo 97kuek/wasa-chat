@@ -96,3 +96,66 @@ func TestSearchScope(t *testing.T) {
 		}
 	}
 }
+
+// Discordは「ヒットとその前後」を組で返す。組の中で hit が立っているものが本体
+func TestPickHit(t *testing.T) {
+	before := message("部員A", "前", time.Minute)
+	hit := message("部員B", "本体", time.Minute)
+	hit.Hit = true
+	after := message("部員C", "後", time.Minute)
+
+	if got, ok := pickHit([]Message{before, hit, after}); !ok || got.Content != "本体" {
+		t.Fatalf("ヒットを選べない: %+v", got)
+	}
+	// hit が立っていなければ先頭を使う（仕様が変わっても空にしない）
+	if got, ok := pickHit([]Message{before, after}); !ok || got.Content != "前" {
+		t.Fatalf("先頭へ落ちていない: %+v", got)
+	}
+	if _, ok := pickHit(nil); ok {
+		t.Fatal("空の組から取り出している")
+	}
+}
+
+// 見出しの順を毎回同じにする。走るたびに並びが変わると差分が読めない
+func TestSearchOrdersChannelsStably(t *testing.T) {
+	stub := &discordStub{pages: map[string][][]Message{
+		"c1": {page("あ", 1, time.Minute)}, "c2": {page("い", 1, time.Minute)},
+	}}
+	stub.searchHandler = func(_ *http.Request) any {
+		groups := [][]Message{}
+		for id, name := range map[string]string{"c2": "電装", "c1": "機体"} {
+			hit := message("部員A", name, time.Minute)
+			hit.ID, hit.ChannelID, hit.Hit = "hit-"+id, id, true
+			groups = append(groups, []Message{hit})
+		}
+		return map[string]any{"messages": groups}
+	}
+	stub.serve(t)
+
+	allowed := []Channel{{ID: "c1", Name: "機体班"}, {ID: "c2", Name: "電装班"}}
+	for i := 0; i < 3; i++ {
+		got, err := Search(t.Context(), "token", "g1", "翼", allowed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 || got[0].Channel != "機体班" || got[1].Channel != "電装班" {
+			t.Fatalf("%d回目の並びが違う: %+v", i+1, got)
+		}
+	}
+}
+
+// 候補の表示名から復元しない。表示を変えた瞬間に読む先が壊れる
+func TestPublicChannelsReturnsStructs(t *testing.T) {
+	stub := &discordStub{channels: []Channel{
+		{ID: "c1", Type: channelTypeText, Name: "機体班", Position: 0},
+	}}
+	stub.serve(t)
+
+	got := PublicChannels(t.Context(), "token", "g1")
+	if len(got) != 1 || got[0].ID != "c1" || got[0].Name != "機体班" {
+		t.Fatalf("チャンネルを返せていない: %+v", got)
+	}
+	if PublicChannels(t.Context(), "", "g1") != nil || PublicChannels(t.Context(), "token", "") != nil {
+		t.Fatal("設定が足りないのに読もうとしている")
+	}
+}
