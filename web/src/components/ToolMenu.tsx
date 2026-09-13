@@ -1,18 +1,53 @@
 import { useEffect, useRef, useState } from "react";
 import type { Tool } from "../api";
+import { SelectMenu } from "./SelectMenu";
 
 type Props = {
   tools: Tool[];
   enabled: string[];
   onChange: (enabled: string[]) => void;
-  /** 検索するDiscordのサーバー。空ならすべて（新しい代から数件） */
+  /** 検索するDiscordのサーバー。空ならすべて */
   discordServer: string;
   onDiscordServerChange: (id: string) => void;
   disabled?: boolean;
 };
 
 /**
- * 入力欄の「+」から、参照先のオン・オフを切り替える。
+ * サービスごとの印。**どのサービスかは名前より形で分かる。**
+ * 知らないIDが来ても崩れないよう、既定の形を持たせておく。
+ */
+function ToolIcon({ id }: { id: string }) {
+  if (id === "discord") {
+    return (
+      <svg className="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="#5865F2"
+          d="M19.3 5.3A16.9 16.9 0 0 0 15.1 4l-.2.4a12.6 12.6 0 0 1 3.7 1.9 15.7 15.7 0 0 0-13.2 0A12.6 12.6 0 0 1 9.1 4.4L8.9 4a16.9 16.9 0 0 0-4.2 1.3C2.1 9.3 1.4 13.1 1.8 16.9a17 17 0 0 0 5.1 2.6l1.1-1.7a11 11 0 0 1-1.7-.8l.4-.3a12.1 12.1 0 0 0 10.6 0l.4.3c-.5.3-1.1.6-1.7.8l1.1 1.7a17 17 0 0 0 5.1-2.6c.5-4.4-.7-8.2-2.9-11.6ZM8.5 14.7c-1 0-1.9-.9-1.9-2.1s.8-2.1 1.9-2.1 1.9 1 1.9 2.1-.8 2.1-1.9 2.1Zm7 0c-1 0-1.9-.9-1.9-2.1s.8-2.1 1.9-2.1 1.9 1 1.9 2.1-.8 2.1-1.9 2.1Z"
+        />
+      </svg>
+    );
+  }
+  if (id === "drive") {
+    // Googleドライブの三角。3つの面を色で分ける
+    return (
+      <svg className="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="#0066DA" d="M2 18.2 4.3 22h9.2l-2.3-3.8H2Z" />
+        <path fill="#00AC47" d="m8.9 2-4.6 8 2.3 3.9L11.2 6 8.9 2Z" />
+        <path fill="#EA4335" d="M15.1 2H8.9l6.9 12h6.2L15.1 2Z" />
+        <path fill="#FFBA00" d="M22 14h-6.2l-2.3 4h6.2L22 14Z" />
+        <path fill="#00832D" d="M2 18.2h9.2L15.8 10 11.2 2 2 18.2Z" opacity=".0" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+/**
+ * 入力欄の「+」から、外部サービスとの連携を切り替える。
  *
  * **既定は全部オフ。** 引き継ぎ資料（Wiki・公式サイト・フライトシミュレータ）は
  * 常に読むので、ここに出るのは**それ以外の置き場所**だけである。増やすほど
@@ -63,8 +98,8 @@ export function ToolMenu({
         ref={trigger}
         type="button"
         className={`tool-trigger${active.length > 0 ? " is-active" : ""}`}
-        aria-label="参照先を選ぶ"
-        title="参照先を選ぶ"
+        aria-label="外部サービスと連携"
+        title="外部サービスと連携"
         aria-expanded={open}
         aria-haspopup="true"
         disabled={disabled}
@@ -78,30 +113,30 @@ export function ToolMenu({
       </button>
 
       {open && (
-        <div className="tool-popover" role="group" aria-label="参照先">
-          <p className="tool-popover-head">参照先を追加</p>
-          <p className="tool-popover-note">引き継ぎ資料はいつでも読みます。ここは置き場所を足すものです。</p>
+        <div className="tool-popover" role="group" aria-label="外部サービスと連携">
+          <p className="tool-popover-head">外部サービスと連携</p>
           <ul>
             {tools.map((tool) => (
               <li key={tool.id}>
+                <ToolIcon id={tool.id} />
                 <div className="tool-item-text">
                   <span className="tool-item-name">{tool.name}</span>
                   <span className="tool-item-note">{tool.available ? tool.description : tool.reason}</span>
                   {/* ⚠️ **代ごとにDiscordのサーバーが変わる。** どの代の会話を
-                      読むかは利用者にしか決められないので、ここで選ばせる */}
+                      読むかは利用者にしか決められないので、ここで選ばせる。
+                      選択肢の見た目はOSごとに変わるので、画面と同じ部品を使う */}
                   {tool.available && enabled.includes(tool.id) && tool.servers && tool.servers.length > 0 && (
-                    <label className="tool-item-server">
-                      <span className="visually-hidden">検索するDiscordサーバー</span>
-                      <select
+                    <div className="tool-item-server">
+                      <SelectMenu
+                        label="検索するDiscordサーバー"
                         value={discordServer}
-                        onChange={(event) => onDiscordServerChange(event.target.value)}
-                      >
-                        <option value="">すべてのサーバー（新しい代から3件）</option>
-                        {tool.servers.map((server) => (
-                          <option key={server.id} value={server.id}>{server.name}</option>
-                        ))}
-                      </select>
-                    </label>
+                        options={[
+                          { value: "", label: "すべてのサーバー" },
+                          ...tool.servers.map((server) => ({ value: server.id, label: server.name })),
+                        ]}
+                        onChange={onDiscordServerChange}
+                      />
+                    </div>
                   )}
                 </div>
                 {tool.available ? (

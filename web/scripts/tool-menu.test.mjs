@@ -7,10 +7,10 @@ const page = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
-test("入力欄の「+」から参照先をオン・オフできる", () => {
+test("入力欄の「+」から外部サービスとの連携をオン・オフできる", () => {
   assert.match(page, /<ToolMenu/);
   assert.match(menu, /tool-trigger/);
-  assert.match(menu, /aria-label="参照先を選ぶ"/);
+  assert.match(menu, /aria-label="外部サービスと連携"/);
   // スイッチの本体はチェックボックスのまま。キーボード操作と読み上げを標準に任せる
   assert.match(menu, /type="checkbox"/);
   assert.match(styles, /\.tool-switch input:checked \+ \.tool-switch-track/);
@@ -54,7 +54,7 @@ test("代ごとにDiscordのサーバーが変わるので、どれを読むか�
   // ⚠️ 設定で1つに固定しない。どの代の会話を読むかは利用者にしか決められない
   assert.match(api, /servers\?: \{ id: string; name: string \}\[\]/);
   assert.match(menu, /検索するDiscordサーバー/);
-  assert.match(menu, /すべてのサーバー/);
+  assert.match(menu, /label: "すべてのサーバー"/);
   assert.match(api, /discordServer: discordServer \?\? ""/);
   assert.match(page, /writeStored\("local", DISCORD_SERVER_KEY, id\)/);
 });
@@ -77,4 +77,27 @@ test("起動時もログイン直後も、同じ関数で参照先を読み直�
   const calls = page.match(/void restoreAfterSignIn\(\);/g) ?? [];
   assert.equal(calls.length, 2);
   assert.doesNotMatch(page, /void refreshTools\(\);/);
+});
+
+test("選択肢の見た目をOS任せにしない（画面と同じ部品を使う）", () => {
+  // SelectMenu は「OSごとに選択肢だけ外観が変わるのを避ける」ための部品
+  assert.match(menu, /import \{ SelectMenu \} from "\.\/SelectMenu"/);
+  assert.doesNotMatch(menu, /<select/);
+  assert.match(styles, /\.tool-item-server \.select-menu-trigger/);
+});
+
+test("サービスごとの印を左に出す", () => {
+  assert.match(menu, /function ToolIcon/);
+  assert.match(menu, /id === "discord"/);
+  assert.match(menu, /id === "drive"/);
+  // 知らないIDが来ても崩れない
+  assert.match(menu, /<circle cx="12" cy="12" r="9"/);
+  assert.match(styles, /\.tool-icon \{/);
+});
+
+test("説明は増やさず、必要なことだけ書く", () => {
+  assert.match(menu, /外部サービスと連携<\/p>/);
+  // 「置き場所を足すものです」の説明文は消した（画面が説明で埋まる）
+  assert.doesNotMatch(menu, /引き継ぎ資料はいつでも読みます/);
+  assert.doesNotMatch(styles, /\.tool-popover-note/);
 });

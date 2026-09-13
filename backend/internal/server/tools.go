@@ -99,7 +99,7 @@ func (s *Server) tools(ctx context.Context, user string) []Tool {
 	drive := Tool{
 		ID:          pipeline.ToolDrive,
 		Name:        "共有ドライブ",
-		Description: "Wikiに書かれていない議事録・設計メモも読みます",
+		Description: "wasa.birdman@gmail.com のドライブにある引き継ぎ資料。Wikiに書かれていない議事録・設計を読みます",
 	}
 	switch {
 	case s.live.Current().DriveTOC == "":

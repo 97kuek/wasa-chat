@@ -1959,16 +1959,9 @@ select:focus-visible {
 }
 
 .tool-popover-head {
-  margin: 0 0 2px;
+  margin: 0 0 10px;
   font-size: 13px;
   font-weight: 600;
-}
-
-.tool-popover-note {
-  margin: 0 0 10px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
 }
 
 .tool-popover ul {
@@ -1981,7 +1974,7 @@ select:focus-visible {
 
 .tool-popover li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 8px;
   border-radius: 8px;
@@ -2005,16 +1998,29 @@ select:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* サーバーの選択はトグルの下へ収める。横に並べると名前が長いとき折り返す */
-.tool-item-server select {
+/* サービスの印。名前より先に目に入る */
+.tool-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+}
+
+/* サーバーの選択はトグルの下へ収める。横に並べると名前が長いとき折り返す。
+   OSごとに外観が変わる <select> は使わず、画面と同じ部品（SelectMenu）を使う */
+.tool-item-server {
+  margin-top: 6px;
+}
+
+.tool-item-server .select-menu-trigger {
   width: 100%;
-  margin-top: 4px;
-  padding: 4px 6px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
+  padding: 5px 8px;
   font-size: 12px;
+}
+
+/* 一覧は狭い枠の中に出るので、入りきるように幅を合わせる */
+.tool-item-server .select-menu-options {
+  min-width: 100%;
 }
 
 .tool-unavailable {
@@ -2028,7 +2034,7 @@ select:focus-visible {
 
 /* 見た目のスイッチ。本体はチェックボックスのままにして、
    キーボード操作と読み上げを標準の挙動へ任せる */
-.tool-switch { position: relative; flex: none; display: flex; cursor: pointer; }
+.tool-switch { position: relative; flex: none; display: flex; margin-top: 2px; cursor: pointer; }
 .tool-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
 
 .tool-switch-track {
