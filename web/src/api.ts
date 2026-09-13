@@ -99,6 +99,8 @@ export type Tool = {
   available: boolean;
   /** available が false のときだけ入る。なぜ使えないか */
   reason?: string;
+  /** Discord のときだけ入る。**代ごとにサーバーが変わる**ので選べるようにする */
+  servers?: { id: string; name: string }[];
 };
 
 export async function tools(): Promise<Tool[]> {
@@ -339,6 +341,7 @@ export async function ask(
   signal?: AbortSignal,
   assistantId?: string,
   enabledTools?: string[],
+  discordServer?: string,
   context: ConversationContextTurn[] = [],
   responseMode: ResponseMode = "auto",
   attachments: string[] = [],
@@ -351,6 +354,7 @@ export async function ask(
     body: JSON.stringify({
       question, assistantId: assistantId ?? "", context, responseMode, attachments,
       tools: enabledTools ?? [],
+      discordServer: discordServer ?? "",
     }),
     signal,
   });

@@ -1,8 +1,13 @@
 package server
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/97kuek/wasa-chat/backend/internal/discord"
 	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"github.com/97kuek/wasa-chat/backend/internal/pipeline"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
@@ -94,16 +99,90 @@ func TestDriveUnavailableWithoutIndex(t *testing.T) {
 	}
 }
 
-// Discordは公開チャンネルだけを読むので、許可では絞らない
-func TestDiscordNeedsNoPermission(t *testing.T) {
+// Discordは公開チャンネルだけを読むので、許可では絞らない。
+// ⚠️ **代ごとにサーバーが変わる**ので、選択肢はボットが入っている先から作る
+func TestDiscordNeedsNoPermissionAndListsServers(t *testing.T) {
 	srv := toolServer(t, false)
 	srv.cfg.DiscordBotToken = "token"
-	srv.cfg.DiscordGuildID = "g1"
+	stub := &discordGuildStub{guilds: []discord.Guild{
+		{ID: "g41", Name: "WASA 41代"}, {ID: "g40", Name: "WASA 40代"},
+	}}
+	stub.serve(t)
+
 	for _, tool := range srv.tools(t.Context(), "部員A") {
-		if tool.ID == pipeline.ToolDiscord && !tool.Available {
+		if tool.ID != pipeline.ToolDiscord {
+			continue
+		}
+		if !tool.Available {
 			t.Fatalf("Discordに許可を要求している: %+v", tool)
 		}
+		if len(tool.Servers) != 2 {
+			t.Fatalf("サーバーを選べない: %+v", tool.Servers)
+		}
+		// 名前順で安定させる。並びが毎回変わると、選び直すたびに位置が動く
+		if tool.Servers[0].Name != "WASA 40代" {
+			t.Fatalf("並び順が安定していない: %+v", tool.Servers)
+		}
 	}
+}
+
+// DISCORD_GUILD_IDS を設定したら、そのサーバーだけへ絞る
+func TestSearchableGuildsRespectsAllowList(t *testing.T) {
+	srv := toolServer(t, false)
+	srv.cfg.DiscordBotToken = "token"
+	srv.cfg.DiscordGuildIDs = []string{"g41"}
+	stub := &discordGuildStub{guilds: []discord.Guild{
+		{ID: "g41", Name: "WASA 41代"}, {ID: "g40", Name: "WASA 40代"},
+	}}
+	stub.serve(t)
+
+	got := srv.searchableGuilds(t.Context())
+	if len(got) != 1 || got[0].ID != "g41" {
+		t.Fatalf("許可リストが効いていない: %+v", got)
+	}
+}
+
+// 指定が無ければ横断するが、**代が進むほどサーバーが増える**ので上限を設ける
+func TestSearchTargetsCapsGuilds(t *testing.T) {
+	srv := toolServer(t, false)
+	srv.cfg.DiscordBotToken = "token"
+	guilds := make([]discord.Guild, 6)
+	for i := range guilds {
+		guilds[i] = discord.Guild{ID: fmt.Sprintf("g%d", i), Name: fmt.Sprintf("WASA %d代", 36+i)}
+	}
+	stub := &discordGuildStub{guilds: guilds}
+	stub.serve(t)
+
+	if got := srv.searchTargets(t.Context(), ""); len(got) != MaxSearchGuilds {
+		t.Fatalf("上限が効いていない: %d件", len(got))
+	}
+	// 指定があればそれだけ
+	if got := srv.searchTargets(t.Context(), "g2"); len(got) != 1 || got[0].ID != "g2" {
+		t.Fatalf("指定したサーバーを選べない: %+v", got)
+	}
+	// 許可していないIDを送られても何も読まない
+	if got := srv.searchTargets(t.Context(), "入っていないサーバー"); len(got) != 0 {
+		t.Fatalf("許可外のサーバーを読もうとしている: %+v", got)
+	}
+}
+
+// discordGuildStub は `GET /users/@me/guilds` だけを真似る。
+type discordGuildStub struct{ guilds []discord.Guild }
+
+func (d *discordGuildStub) serve(t *testing.T) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v10/users/@me/guilds", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(d.guilds)
+	})
+	server := httptest.NewServer(mux)
+	discord.SetAPIBaseForTest(server.URL + "/api/v10")
+	discord.ResetGuildCache()
+	t.Cleanup(func() {
+		server.Close()
+		discord.SetAPIBaseForTest("")
+		discord.ResetGuildCache()
+	})
 }
 
 // ⚠️ **文書ごと消さない。** 共同管理者を外しただけで共有ドライブの許可まで

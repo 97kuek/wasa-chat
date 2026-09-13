@@ -5,6 +5,9 @@ type Props = {
   tools: Tool[];
   enabled: string[];
   onChange: (enabled: string[]) => void;
+  /** 検索するDiscordのサーバー。空ならすべて（新しい代から数件） */
+  discordServer: string;
+  onDiscordServerChange: (id: string) => void;
   disabled?: boolean;
 };
 
@@ -19,7 +22,9 @@ type Props = {
  * **狭める**もの（docs/09 D-5）、ここは**足す**もの。両方指定されたときは
  * 足したうえで狭めるので、範囲外のものは結局読まれない。
  */
-export function ToolMenu({ tools, enabled, onChange, disabled = false }: Props) {
+export function ToolMenu({
+  tools, enabled, onChange, discordServer, onDiscordServerChange, disabled = false,
+}: Props) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -82,6 +87,22 @@ export function ToolMenu({ tools, enabled, onChange, disabled = false }: Props) 
                 <div className="tool-item-text">
                   <span className="tool-item-name">{tool.name}</span>
                   <span className="tool-item-note">{tool.available ? tool.description : tool.reason}</span>
+                  {/* ⚠️ **代ごとにDiscordのサーバーが変わる。** どの代の会話を
+                      読むかは利用者にしか決められないので、ここで選ばせる */}
+                  {tool.available && enabled.includes(tool.id) && tool.servers && tool.servers.length > 0 && (
+                    <label className="tool-item-server">
+                      <span className="visually-hidden">検索するDiscordサーバー</span>
+                      <select
+                        value={discordServer}
+                        onChange={(event) => onDiscordServerChange(event.target.value)}
+                      >
+                        <option value="">すべてのサーバー（新しい代から3件）</option>
+                        {tool.servers.map((server) => (
+                          <option key={server.id} value={server.id}>{server.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                 </div>
                 {tool.available ? (
                   <label className="tool-switch">

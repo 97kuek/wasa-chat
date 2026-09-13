@@ -2005,6 +2005,18 @@ select:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* サーバーの選択はトグルの下へ収める。横に並べると名前が長いとき折り返す */
+.tool-item-server select {
+  width: 100%;
+  margin-top: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
 .tool-unavailable {
   flex: none;
   padding: 3px 10px;

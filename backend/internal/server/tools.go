@@ -21,11 +21,20 @@ type Tool struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Available   bool   `json:"available"`
+	// Servers は Discord のときだけ入る。**代ごとにサーバーが変わる**ので、
+	// 設定で1つに固定せず、ボットが入っている先から選んでもらう
+	Servers []ToolServer `json:"servers,omitempty"`
 	// Reason は Available が false のときだけ入る。なぜ使えないか。
 	//
 	// ⚠️ **使えないものを黙って消さない。** 一覧から消すと「無い機能」に見え、
 	// 設定すれば使えることが管理者にも伝わらない。
 	Reason string `json:"reason,omitempty"`
+}
+
+// ToolServer は選べるDiscordのサーバー。
+type ToolServer struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // handleTools は参照先の一覧を返す。
@@ -103,13 +112,17 @@ func (s *Server) tools(ctx context.Context, user string) []Tool {
 		Name:        "Discord検索",
 		Description: "公開チャンネルの会話を読んで答えます",
 	}
+	guilds := s.searchableGuilds(ctx)
 	switch {
 	case s.cfg.DiscordBotToken == "":
 		discordTool.Reason = "DISCORD_BOT_TOKEN が未設定です"
-	case s.cfg.DiscordGuildID == "":
-		discordTool.Reason = "DISCORD_GUILD_ID が未設定です"
+	case len(guilds) == 0:
+		discordTool.Reason = "WASA ChatのボットがどのDiscordサーバーにも入っていません"
 	default:
 		discordTool.Available = true
+		for _, guild := range guilds {
+			discordTool.Servers = append(discordTool.Servers, ToolServer{ID: guild.ID, Name: guild.Name})
+		}
 	}
 	return []Tool{drive, discordTool}
 }
@@ -120,6 +133,10 @@ func (s *Server) tools(ctx context.Context, user string) []Tool {
 // 取れなければ資料だけで答える。
 const discordSearchTimeout = 20 * time.Second
 
+// MaxSearchGuilds は1回の質問で検索するサーバーの数。
+// 代が進むほど増えるので、「すべて」を選ばれたときの歯止め。
+const MaxSearchGuilds = discord.MaxSearchGuilds
+
 // searchDiscordFor は質問に関係する会話を拾って、回答の材料にする。
 //
 // ⚠️ **読む先は公開チャンネルだけ。** 画面の利用者はWikiアカウントであって、
@@ -127,34 +144,94 @@ const discordSearchTimeout = 20 * time.Second
 // **Discordに入っていない人が非公開チャンネルの中身を読める**（docs/09 A-12）。
 //
 // DISCORD_SEARCH_CHANNELS を設定すると、さらにそのチャンネルだけへ絞れる。
-func (s *Server) searchDiscordFor(ctx context.Context, question string) (transcript, note string) {
-	if s.cfg.DiscordBotToken == "" || s.cfg.DiscordGuildID == "" {
+// searchDiscordFor は質問に関係する会話を拾う。guildID が空なら、新しい代から
+// MaxSearchGuilds 件まで横断する。
+func (s *Server) searchDiscordFor(ctx context.Context, question, guildID string) (transcript, note string) {
+	if s.cfg.DiscordBotToken == "" {
 		return "", ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, discordSearchTimeout)
 	defer cancel()
 
-	allowed := s.searchableChannels(ctx)
-	if len(allowed) == 0 {
+	targets := s.searchTargets(ctx, guildID)
+	if len(targets) == 0 {
 		return "", ""
 	}
-	logs, err := discord.Search(ctx, s.cfg.DiscordBotToken, s.cfg.DiscordGuildID, question, allowed)
-	if err != nil {
-		// **黙って資料だけで答える。** 会話が拾えないことは、質問に答えられない
-		// ことを意味しない。ここで質問ごと失敗させるほうが損
-		log.Printf("Discordの検索に失敗しました（資料だけで答えます）: %v", err)
-		return "", ""
+
+	var logs []discord.ChannelLog
+	var servers []string
+	for _, guild := range targets {
+		allowed := s.searchableChannels(ctx, guild.ID)
+		if len(allowed) == 0 {
+			continue
+		}
+		found, err := discord.Search(ctx, s.cfg.DiscordBotToken, guild.ID, question, allowed)
+		if err != nil {
+			// **黙って続ける。** 1つのサーバーが読めなくても、ほかは読める。
+			// 会話が拾えないことは、質問に答えられないことを意味しない
+			log.Printf("Discord（%s）の検索に失敗しました: %v", guild.Name, err)
+			continue
+		}
+		if len(found) == 0 {
+			continue
+		}
+		// **どのサーバーの話かを見出しに残す。** 代が違えば別の話である
+		for i := range found {
+			found[i].Channel = guild.Name + " / " + found[i].Channel
+		}
+		logs = append(logs, found...)
+		servers = append(servers, guild.Name)
 	}
+
 	transcript = discord.Transcript(logs)
 	if strings.TrimSpace(transcript) == "" {
 		return "", ""
 	}
-	return transcript, discord.SearchScope(question, len(logs), discord.CountMessages(logs))
+	return transcript, discord.SearchScopeAcross(question, servers, len(logs), discord.CountMessages(logs))
+}
+
+// searchTargets は検索するサーバーを決める。
+//
+// 指定が無ければ横断するが、**代が進むほどサーバーが増える**ので上限を設ける。
+// 一覧は名前順なので、新しい代が上に来る名前付けをしてもらう前提にしない。
+// 指定があればそれだけ（許可した一覧に無ければ何もしない）。
+func (s *Server) searchTargets(ctx context.Context, guildID string) []discord.Guild {
+	guilds := s.searchableGuilds(ctx)
+	if guildID == "" {
+		if len(guilds) > MaxSearchGuilds {
+			return guilds[:MaxSearchGuilds]
+		}
+		return guilds
+	}
+	for _, guild := range guilds {
+		if guild.ID == guildID {
+			return []discord.Guild{guild}
+		}
+	}
+	return nil
+}
+
+// searchableGuilds は画面から検索してよいサーバーを返す。
+//
+// DISCORD_GUILD_IDS を設定すると、そのサーバーだけへ絞れる。未設定なら
+// ボットが入っている先すべて（招待するのは管理者なので、既定はこれでよい）。
+func (s *Server) searchableGuilds(ctx context.Context) []discord.Guild {
+	all := discord.ListGuilds(ctx, s.cfg.DiscordBotToken)
+	if len(s.cfg.DiscordGuildIDs) == 0 {
+		return all
+	}
+	allowed := make([]discord.Guild, 0, len(all))
+	for _, guild := range all {
+		if slices.Contains(s.cfg.DiscordGuildIDs, guild.ID) {
+			allowed = append(allowed, guild)
+		}
+	}
+	return allowed
 }
 
 // searchableChannels は画面から読んでよいチャンネルを返す。
-func (s *Server) searchableChannels(ctx context.Context) []discord.Channel {
-	open := discord.ScopeChoices(ctx, s.cfg.DiscordBotToken, s.cfg.DiscordGuildID, "")
+func (s *Server) searchableChannels(ctx context.Context, guildID string) []discord.Channel {
+	open := discord.ScopeChoices(ctx, s.cfg.DiscordBotToken, guildID, "")
 	allowList := map[string]bool{}
 	for _, id := range s.cfg.DiscordSearchChannels {
 		allowList[id] = true

@@ -94,6 +94,8 @@ const ANNOUNCEMENT_READ_KEY = "wasa-chat-read-announcements";
 const ASSISTANT_KEY = "wasa-chat-assistant";
 /** 「+」で足した参照先。次に開いたときも同じ状態にしたいので覚えておく */
 const TOOLS_KEY = "wasa-chat-tools";
+/** 検索するDiscordのサーバー。代ごとに変わるので覚えておく */
+const DISCORD_SERVER_KEY = "wasa-chat-discord-server";
 const ASSISTANT_FAVORITES_KEY = "wasa-chat-assistant-favorites";
 const ASSISTANT_SORT_KEY = "wasa-chat-assistant-sort";
 function resizeComposerTextarea(target: HTMLTextAreaElement | null): void {
@@ -210,6 +212,7 @@ export default function App() {
   const [assistantId, setAssistantId] = useState(() => readStored("local", ASSISTANT_KEY) ?? "");
   const [availableTools, setAvailableTools] = useState<Tool[]>([]);
   const [enabledTools, setEnabledTools] = useState<string[]>(loadEnabledTools);
+  const [discordServer, setDiscordServer] = useState(() => readStored("local", DISCORD_SERVER_KEY) ?? "");
   // チャット画面とアシスタント一覧を切り替える。モーダルではなく画面ごと
   // 差し替えるのは、一覧が「選ぶ場所」であって会話の付随物ではないため
   const [view, setView] = useState<"chat" | "assistants" | "admin">(
@@ -789,6 +792,10 @@ export default function App() {
     setAvailableTools(list);
     // 使えなくなったものをオンのまま残さない。表示と実際の参照先が食い違う
     setEnabledTools((current) => current.filter((id) => list.some((tool) => tool.id === id && tool.available)));
+    // 選んでいたDiscordサーバーが無くなっていたら「すべて」へ戻す。
+    // 消えたサーバーを指したままだと、検索しても毎回0件になる
+    const servers = list.find((tool) => tool.id === "discord")?.servers ?? [];
+    setDiscordServer((current) => (current && !servers.some((server) => server.id === current) ? "" : current));
   }
 
   async function refreshAssistants() {
@@ -1144,7 +1151,7 @@ export default function App() {
           patch((current) => ({ ...current, streaming: false, status: "", retryAt: undefined }));
           break;
       }
-      }, controller.signal, assistantId, enabledTools, context, responseMode, sent ? [sent.dataUrl] : []);
+      }, controller.signal, assistantId, enabledTools, discordServer, context, responseMode, sent ? [sent.dataUrl] : []);
     } catch (error) {
       // fetch自体の失敗やストリームの切断は ask() の中でイベントにならない。
       // ここで拾わないと streaming が立ったままになり、入力欄が永久に
@@ -1777,6 +1784,11 @@ export default function App() {
                 onChange={(next) => {
                   setEnabledTools(next);
                   writeStored("local", TOOLS_KEY, JSON.stringify(next));
+                }}
+                discordServer={discordServer}
+                onDiscordServerChange={(id) => {
+                  setDiscordServer(id);
+                  writeStored("local", DISCORD_SERVER_KEY, id);
                 }}
                 disabled={streaming}
               />

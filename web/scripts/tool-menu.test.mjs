@@ -49,3 +49,21 @@ test("入力欄は最下部にあるので、一覧は上へ開く", () => {
 test("回答中は参照先を変えられない（送信済みの質問と食い違う）", () => {
   assert.match(page, /<ToolMenu[\s\S]*?disabled=\{streaming\}/);
 });
+
+test("代ごとにDiscordのサーバーが変わるので、どれを読むか選べる", () => {
+  // ⚠️ 設定で1つに固定しない。どの代の会話を読むかは利用者にしか決められない
+  assert.match(api, /servers\?: \{ id: string; name: string \}\[\]/);
+  assert.match(menu, /検索するDiscordサーバー/);
+  assert.match(menu, /すべてのサーバー/);
+  assert.match(api, /discordServer: discordServer \?\? ""/);
+  assert.match(page, /writeStored\("local", DISCORD_SERVER_KEY, id\)/);
+});
+
+test("選んでいたサーバーが無くなったら「すべて」へ戻す", () => {
+  // 消えたサーバーを指したままだと、検索しても毎回0件になる
+  assert.match(page, /servers\.some\(\(server\) => server\.id === current\)/);
+});
+
+test("オンのときだけサーバーを選ばせる", () => {
+  assert.match(menu, /enabled\.includes\(tool\.id\) && tool\.servers/);
+});

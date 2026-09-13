@@ -47,9 +47,10 @@ type Config struct {
 	// SourceCheck は現在の索引とWiki・公式サイトを読み取り専用で照合する。
 	SourceCheck          func(context.Context) ([]state.SourceDelta, error)
 	SourceCheckAvailable bool
-	// DiscordGuildID は画面からDiscordを検索するときの対象サーバー。
-	// スラッシュコマンドには要らない（呼ばれた場所から分かるため）
-	DiscordGuildID string
+	// DiscordGuildIDs を設定すると、画面から検索できるサーバーを絞れる。
+	// **未設定ならボットが入っている先すべて。** 代ごとにDiscordのサーバーが
+	// 変わるため、設定で1つに固定しない（利用者が画面で選ぶ）
+	DiscordGuildIDs []string
 	// DiscordSearchChannels を設定すると、画面からの検索をそのチャンネルだけへ絞る。
 	// 未設定なら公開チャンネル全部（docs/09 A-12）
 	DiscordSearchChannels []string
@@ -915,6 +916,8 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		// Tools は入力欄の「+」で足した参照先。引き継ぎ資料は常に読むので
 		// ここには入らない（**足す**ものだけ）
 		Tools []string `json:"tools"`
+		// DiscordServer は検索するDiscordサーバー。空なら新しい代から横断する
+		DiscordServer string `json:"discordServer"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAskBodyBytes)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "リクエストが不正です"})
@@ -1037,7 +1040,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	if slices.Contains(tools, pipeline.ToolDiscord) {
 		// **回答の前に拾う。** 索引には入っていないので、質問文で検索して
 		// 見つかった会話を材料として渡す（資料とは別の見出しで扱う）
-		scope.DiscordLog, scope.DiscordNote = s.searchDiscordFor(r.Context(), question)
+		scope.DiscordLog, scope.DiscordNote = s.searchDiscordFor(r.Context(), question, body.DiscordServer)
 	}
 	if err := s.pipe.RunInScope(r.Context(), question, body.Context, scope, responseMode, images, emit); err != nil {
 		log.Printf("質問の処理に失敗: %v", err)

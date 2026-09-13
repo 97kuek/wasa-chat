@@ -370,8 +370,8 @@ func main() {
 		DiscordPublicKey: os.Getenv("DISCORD_PUBLIC_KEY"),
 		DiscordAppID:     os.Getenv("DISCORD_APP_ID"),
 		DiscordBotToken:  os.Getenv("DISCORD_BOT_TOKEN"),
-		DiscordGuildID:   os.Getenv("DISCORD_GUILD_ID"),
-		// 未設定なら公開チャンネル全部。絞りたいときだけ指定する（docs/09 A-12）
+		// どちらも未設定でよい。絞りたいときだけ指定する（docs/09 A-12）
+		DiscordGuildIDs:       splitList(os.Getenv("DISCORD_GUILD_IDS")),
 		DiscordSearchChannels: splitList(os.Getenv("DISCORD_SEARCH_CHANNELS")),
 		AdminUsers:            admins,
 	}
