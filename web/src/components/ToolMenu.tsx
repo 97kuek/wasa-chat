@@ -124,15 +124,17 @@ export function ToolMenu({
                   <span className="tool-item-note">{tool.available ? tool.description : tool.reason}</span>
                   {/* ⚠️ **代ごとにDiscordのサーバーが変わる。** どの代の会話を
                       読むかは利用者にしか決められないので、ここで選ばせる。
-                      選択肢の見た目はOSごとに変わるので、画面と同じ部品を使う */}
-                  {tool.available && enabled.includes(tool.id) && tool.servers && tool.servers.length > 0 && (
+                      選択肢の見た目はOSごとに変わるので、画面と同じ部品を使う。
+                      **1つしか無いうちは出さない。** 選びようが無いものを並べても、
+                      設定が増えたように見えるだけ（2026-09-13の指摘） */}
+                  {tool.available && enabled.includes(tool.id) && (tool.servers?.length ?? 0) > 1 && (
                     <div className="tool-item-server">
                       <SelectMenu
                         label="検索するDiscordサーバー"
                         value={discordServer}
                         options={[
                           { value: "", label: "すべてのサーバー" },
-                          ...tool.servers.map((server) => ({ value: server.id, label: server.name })),
+                          ...(tool.servers ?? []).map((server) => ({ value: server.id, label: server.name })),
                         ]}
                         onChange={onDiscordServerChange}
                       />

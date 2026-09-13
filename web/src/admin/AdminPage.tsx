@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   adminOverview,
   checkSources,
+  integrations as fetchIntegrations,
   setCoAdmin,
   setToolGrant,
   type AdminOverview,
   type AdminUserUsage,
+  type Integration,
   type SourceCheckResult,
 } from "./api";
 import { LoadingScreen } from "../components/LoadingScreen";
@@ -22,7 +24,7 @@ type Props = {
 };
 
 type SortKey = "username" | "today" | "sevenDays" | "thirtyDays" | "lastUsed";
-type AdminTab = "overview" | "sources" | "users" | "quota" | "logs";
+type AdminTab = "overview" | "sources" | "integrations" | "users" | "quota" | "logs";
 
 const MILLISECONDS_PER_SECOND = 1_000;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * MILLISECONDS_PER_SECOND;
@@ -45,6 +47,7 @@ const PERIOD_OPTIONS: SelectOption[] = [
 const tabs: { id: AdminTab; label: string; description: string }[] = [
   { id: "overview", label: "概要", description: "今日の利用状況とシステムの状態を確認します。" },
   { id: "sources", label: "資料更新", description: "公開元の変更を確認し、変わっていれば手元で取り込み直します。" },
+  { id: "integrations", label: "外部サービス連携", description: "DiscordとGoogleドライブのつなぎ込みと、その状態を確認します。" },
   { id: "users", label: "利用者・権限", description: "利用回数の確認と、共同管理者や共有ドライブの許可を行います。" },
   { id: "quota", label: "API利用状況", description: "Gemini無料枠の利用量とリセット時刻を確認します。" },
   { id: "logs", label: "監査ログ", description: "質問本文を含まない利用記録と管理者操作を確認します。" },
@@ -153,6 +156,7 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
   const [loading, setLoading] = useState(true);
   const [roleBusy, setRoleBusy] = useState("");
   const [driveBusy, setDriveBusy] = useState("");
+  const [links, setLinks] = useState<Integration[]>([]);
   const [checkingSources, setCheckingSources] = useState(false);
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [search, setSearch] = useState("");
@@ -178,6 +182,9 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
     } finally {
       setLoading(false);
     }
+    // 連携の状態は別の口から取る。**片方が落ちても、もう片方は出す。**
+    // 管理画面が丸ごと開けなくなるほうが困る
+    setLinks(await fetchIntegrations().catch(() => [] as Integration[]));
   }
 
   useEffect(() => {
@@ -482,6 +489,52 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
                 </div>
               </section>
             </>
+          )}
+
+          {activeTab === "integrations" && (
+            <section aria-labelledby="admin-links-title">
+              <div className="admin-section-head">
+                <div>
+                  <h3 id="admin-links-title">外部サービス連携</h3>
+                  <p>入力欄の「+」から使えるようになる置き場所です。引き継ぎ資料（Wiki・公式サイト・フライトシミュレータ）は連携なしで常に読みます。</p>
+                </div>
+              </div>
+              <ul className="admin-links">
+                {links.length === 0 && <li className="admin-empty">読み込み中です</li>}
+                {links.map((link) => (
+                  <li key={link.id}>
+                    <div className="admin-link-head">
+                      <span className="admin-link-name">{link.name}</span>
+                      <span className={`admin-link-state${link.connected ? " is-on" : ""}`}>
+                        {link.connected ? "接続済み" : "未接続"}
+                      </span>
+                    </div>
+                    <p className="admin-link-summary">{link.connected ? link.summary : link.nextStep}</p>
+                    {link.detail && link.detail.length > 0 && (
+                      <ul className="admin-link-detail">
+                        {link.detail.map((item) => <li key={item}>{item}</li>)}
+                      </ul>
+                    )}
+                    {/* ⚠️ 共有相手に追加するアドレス。**コピーできる形で出す。**
+                        手で写すと打ち間違えて、原因の分からない404になる */}
+                    {link.shareWith && (
+                      <p className="admin-link-share">
+                        共有相手に追加するアドレス: <code>{link.shareWith}</code>
+                      </p>
+                    )}
+                    {link.actionUrl && (
+                      <a className="admin-link-action" href={link.actionUrl} target="_blank" rel="noreferrer noopener">
+                        {link.actionLabel ?? "設定を開く"}
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="admin-footnote">
+                Discordは新しいサーバーへボットを追加するだけで、そのサーバーも検索できるようになります。
+                古い代のサーバーに残しておけば、過去の代の会話も引き続き読めます。
+              </p>
+            </section>
           )}
 
           {activeTab === "users" && (

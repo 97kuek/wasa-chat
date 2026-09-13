@@ -124,6 +124,28 @@ export async function setToolGrant(username: string, tool: string, enabled: bool
   });
 }
 
+/**
+ * 外部サービスとの連携の状態。
+ *
+ * **つながっているかを画面で見えるようにする。** 環境変数を読める人しか状態が
+ * 分からない作りだと、代替わりのときに誰も直せない。
+ */
+export type Integration = {
+  id: string;
+  name: string;
+  connected: boolean;
+  summary?: string;
+  nextStep?: string;
+  actionUrl?: string;
+  actionLabel?: string;
+  detail?: string[];
+  shareWith?: string;
+};
+
+export function integrations(): Promise<Integration[]> {
+  return adminRequest<Integration[]>("/api/admin/integrations", "連携の状態を読み込めませんでした");
+}
+
 export function checkSources(): Promise<SourceCheckResult> {
   return adminRequest<SourceCheckResult>("/api/admin/source-check", "更新を確認できませんでした", { method: "POST" });
 }

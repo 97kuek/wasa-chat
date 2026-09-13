@@ -3655,3 +3655,94 @@ select:focus-visible {
 .answer-feedback-close svg { width: 16px; }
 .answer-feedback-close:hover { background: var(--surface-soft); color: var(--text); }
 
+
+/* ---- 外部サービス連携（管理画面） ---- */
+
+.admin-links {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-links > li {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.admin-link-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-link-name { font-weight: 600; }
+
+/* つながっているかを、文言だけでなく色でも示す */
+.admin-link-state {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.admin-link-state.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.admin-link-summary {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.admin-link-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-link-detail li {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  font-size: 12px;
+}
+
+/* 手で写すと打ち間違えて、原因の分からない404になる。選んでコピーできる形で出す */
+.admin-link-share {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.admin-link-share code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--text);
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+.admin-link-action {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.admin-link-action:hover { opacity: 0.9; }

@@ -51,6 +51,10 @@ type Config struct {
 	// **未設定ならボットが入っている先すべて。** 代ごとにDiscordのサーバーが
 	// 変わるため、設定で1つに固定しない（利用者が画面で選ぶ）
 	DiscordGuildIDs []string
+	// DriveServiceAccount は共有フォルダの共有相手に追加すべきアドレス。
+	// **管理画面へ出すためだけに持つ。** 実際にDriveを読むのは更新Jobで、
+	// このサービスは読まない（表示と実体が違うので、値は運用側が入れる）
+	DriveServiceAccount string
 	// DiscordSearchChannels を設定すると、画面からの検索をそのチャンネルだけへ絞る。
 	// 未設定なら公開チャンネル全部（docs/09 A-12）
 	DiscordSearchChannels []string
@@ -112,6 +116,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/roles", s.requireOwner(s.handleAdminRole))
 	// 共有ドライブの許可は日常の運用なので、主管理者に限らず管理者が出せる
 	mux.HandleFunc("POST /api/admin/tools", s.requireAdmin(s.handleToolGrant))
+	mux.HandleFunc("GET /api/admin/integrations", s.requireAdmin(s.handleIntegrations))
 	mux.HandleFunc("POST /api/admin/source-check", s.requireAdmin(s.handleSourceCheck))
 	mux.HandleFunc("GET /api/tools", s.requireAuth(s.handleTools))
 	mux.HandleFunc("GET /api/assistants", s.requireAuth(s.handleListAssistants))

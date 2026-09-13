@@ -6,6 +6,8 @@ const menu = readFileSync(new URL("../src/components/ToolMenu.tsx", import.meta.
 const page = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const admin = readFileSync(new URL("../src/admin/AdminPage.tsx", import.meta.url), "utf8");
+const adminApi = readFileSync(new URL("../src/admin/api.ts", import.meta.url), "utf8");
 
 test("入力欄の「+」から外部サービスとの連携をオン・オフできる", () => {
   assert.match(page, /<ToolMenu/);
@@ -64,8 +66,9 @@ test("選んでいたサーバーが無くなったら「すべて」へ戻す",
   assert.match(page, /servers\.some\(\(server\) => server\.id === current\)/);
 });
 
-test("オンのときだけサーバーを選ばせる", () => {
-  assert.match(menu, /enabled\.includes\(tool\.id\) && tool\.servers/);
+test("オンのとき、サーバーが2つ以上あるときだけ選ばせる", () => {
+  // 選びようが無いものを並べても、設定が増えたように見えるだけ（2026-09-13の指摘）
+  assert.match(menu, /enabled\.includes\(tool\.id\) && \(tool\.servers\?\.length \?\? 0\) > 1/);
 });
 
 test("起動時もログイン直後も、同じ関数で参照先を読み直す", () => {
@@ -100,4 +103,25 @@ test("説明は増やさず、必要なことだけ書く", () => {
   // 「置き場所を足すものです」の説明文は消した（画面が説明で埋まる）
   assert.doesNotMatch(menu, /引き継ぎ資料はいつでも読みます/);
   assert.doesNotMatch(styles, /\.tool-popover-note/);
+});
+
+test("外部サービスの連携状態を管理画面で見られる", () => {
+  // 環境変数を読める人しか状態が分からない作りだと、代替わりのときに誰も直せない
+  assert.match(adminApi, /\/api\/admin\/integrations/);
+  assert.match(admin, /外部サービス連携/);
+  assert.match(admin, /接続済み/);
+  assert.match(admin, /未接続/);
+});
+
+test("ボットの追加を管理画面から押せる", () => {
+  // コマンドを打てる人しか追加できない作りだと、代が替わると使えなくなる
+  assert.match(admin, /link\.actionUrl/);
+  assert.match(admin, /admin-link-action/);
+  assert.match(styles, /\.admin-link-action \{/);
+});
+
+test("共有相手のアドレスは選んでコピーできる形で出す", () => {
+  // 手で写すと打ち間違えて、原因の分からない404になる
+  assert.match(admin, /共有相手に追加するアドレス/);
+  assert.match(styles, /\.admin-link-share code \{[\s\S]*?user-select: all;/);
 });
