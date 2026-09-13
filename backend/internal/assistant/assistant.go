@@ -28,12 +28,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
 )
 
@@ -365,12 +365,14 @@ func ScopeLabel(a *state.Assistant) string {
 		return ""
 	}
 	var parts []string
+	// **出所の値は index パッケージの定義を使う。** 文字列で書くと、
+	// 値を変えたときにここだけ黙って合わなくなる（origins も同じ定義を見ている）
 	switch a.Origin {
-	case "wiki":
+	case index.OriginWiki:
 		parts = append(parts, "引き継ぎWikiのみ")
-	case "site":
+	case index.OriginSite:
 		parts = append(parts, "公式サイトのみ（部外に出せる情報だけ）")
-	case "fee":
+	case index.OriginFEE:
 		parts = append(parts, "フライトシミュレータのガイドのみ")
 	}
 	if a.Team != "" {

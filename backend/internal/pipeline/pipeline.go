@@ -261,7 +261,7 @@ const answerPrompt = `# タスク
 // 回答プロンプトが「目次を根拠に答えてよい」と明記しているため、ここは
 // 表示（「公式サイトのみ（部外に出せる情報だけ）」）と食い違う穴になる。
 func scopedTOC(ix *index.Index, sc Scope) string {
-	if sc.Assistant == nil || sc.Assistant.Origin != "site" {
+	if sc.Assistant == nil || sc.Assistant.Origin != OriginSite {
 		return ix.TOC
 	}
 	// 空になるのは目次の見出しが変わったとき。全体を渡すより目次なしを選ぶ
@@ -490,7 +490,7 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 	for _, pg := range pages {
 		origin := pg.Source
 		if origin == "" {
-			origin = "wiki" // 旧い index.json には source が無い
+			origin = OriginWiki // 旧い index.json には source が無い
 		}
 		sources = append(sources, Source{
 			Title: pg.Title, URL: pg.URL, LastEdited: pg.LastEdited, Origin: origin,
