@@ -8,15 +8,26 @@ import { API_ORIGIN } from "./config";
  * ここが欠けていると、画面からその出所を選べないまま
  * サーバーだけが受け付ける状態になる（実際 `fee` がその状態だった）。
  */
+/** アシスタントが参照範囲を**狭める**ときの指定。索引の資料だけが対象。 */
 export type AssistantOrigin = "wiki" | "site" | "fee";
+
+/**
+ * 出典の出所。
+ *
+ * ⚠️ **AssistantOrigin と同じにしない。** アシスタントは範囲を狭めるもので、
+ * 索引に入っている資料しか選べない。一方で出典には、入力欄の「+」で足した
+ * 共有ドライブやDiscordも出る。同じ型に押し込むと、アシスタントの選択肢に
+ * Discordが並ぶことになる（2026-09-13のCodex指摘）。
+ */
+export type SourceOrigin = AssistantOrigin | "drive" | "discord";
 
 export type Source = {
   title: string;
   url: string;
   last_edited: string;
   /** 資料の出所。**部外に出せる情報かどうかの判断に要る**ので、出典に必ず出す。
-   *  値はサーバー側（assistant.origins）と同じにすること。 */
-  origin?: AssistantOrigin;
+   *  値はサーバー側（pipeline.originLabels）と同じにすること。 */
+  origin?: SourceOrigin;
   /** この資料から実際に読んだ節のパンくず（「ページ名 &gt; 見出し」）。
    *  回答末尾の「参照」に出し、どこを開けば確かめられるかまで示す。
    *  節を選び終えるまで確定しないので、`pages`イベントは2回流れる。 */

@@ -1045,7 +1045,8 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	if slices.Contains(tools, pipeline.ToolDiscord) {
 		// **回答の前に拾う。** 索引には入っていないので、質問文で検索して
 		// 見つかった会話を材料として渡す（資料とは別の見出しで扱う）
-		scope.DiscordLog, scope.DiscordNote = s.searchDiscordFor(r.Context(), question, body.DiscordServer)
+		scope.DiscordLog, scope.DiscordNote, scope.DiscordSources =
+			s.searchDiscordFor(r.Context(), question, body.DiscordServer)
 	}
 	if err := s.pipe.RunInScope(r.Context(), question, body.Context, scope, responseMode, images, emit); err != nil {
 		log.Printf("質問の処理に失敗: %v", err)

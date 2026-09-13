@@ -278,6 +278,13 @@ type Scope struct {
 	DiscordLog string
 	// DiscordNote は何を読んだかの説明。回答の材料ではなく、画面へ出す説明用
 	DiscordNote string
+	// DiscordSources は読んだチャンネルと、そこへ飛べるリンク。
+	//
+	// ⚠️ **出典として出す。** Discordの会話は索引のページではないが、
+	// 「どこを開けば確かめられるか」は示せる。示さないと、部員の発言を根拠に
+	// 答えたことが後から誰にも追えない（2026-09-13に本番で発覚）。
+	// 参照欄に残るので、履歴を開き直しても分かる
+	DiscordSources []Source
 }
 
 // NewScope は画面から届いたツール名を、読んでよい範囲へ落とす。
@@ -451,6 +458,10 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 			Title: pg.Title, URL: pg.URL, LastEdited: pg.LastEdited, Origin: origin,
 		})
 	}
+	// ⚠️ **Discordの会話も参照欄へ入れる。** 索引のページではないが、
+	// リンクは作れる。入れないと「Discordの会話によれば」と答えながら、
+	// どのチャンネルの話か後から追えない
+	sources = append(sources, sc.DiscordSources...)
 	emit(Event{Type: "pages", Pages: sources})
 
 	chunkStarted := time.Now()
@@ -665,6 +676,9 @@ var originLabels = map[string]string{
 	OriginSite:  "公式サイト",
 	OriginFEE:   "フライトシミュレータ",
 	OriginDrive: "共有ドライブ",
+	// Discordは索引に入らないが、**出典としては出す**。
+	// 参照欄で資料と区別できないと、部員の発言を資料の記述と取り違える
+	ToolDiscord: "Discord",
 }
 
 // OriginLabel は出所を利用者に見せる名前へ直す。
@@ -682,8 +696,15 @@ func OriginLabel(source string) string {
 	return "不明な資料"
 }
 
-// KnownOrigin は索引に入ってよい出所かを返す。
+// KnownOrigin は**索引に入ってよい**出所かを返す。
+//
+// ⚠️ Discordは originLabels には居るが、ここでは false。参照欄に出すための
+// 呼び名を持っているだけで、索引のページとしては存在しない。
+// もし索引に source="discord" のページが現れたら、それは作り間違いである。
 func KnownOrigin(source string) bool {
+	if source == ToolDiscord {
+		return false
+	}
 	_, ok := originLabels[source]
 	return ok || source == ""
 }

@@ -136,3 +136,21 @@ test("説明は2行までに収める", () => {
   // 3行4行と折り返すと、その項目だけ背が高くなって一覧全体が伸びる
   assert.match(styles, /\.tool-item-note \{[\s\S]*?-webkit-line-clamp: 2;/);
 });
+
+test("Discordの会話も参照欄に出し、発言へ飛べる", () => {
+  // ⚠️ 索引のページではないがリンクは作れる。出さないと「Discordの会話に
+  // よれば」と答えながら、どの発言が根拠なのか後から追えない（2026-09-13）
+  const chat = readFileSync(new URL("../src/chat.ts", import.meta.url), "utf8");
+  const reference = readFileSync(new URL("../src/components/ReferenceSummary.tsx", import.meta.url), "utf8");
+  assert.match(chat, /export function referenceItems/);
+  assert.match(chat, /source\.origin === "discord"/);
+  assert.match(reference, /item\.url/);
+  assert.match(reference, /target="_blank"/);
+});
+
+test("出典の出所とアシスタントの参照範囲を同じ型にしない", () => {
+  // アシスタントは範囲を狭めるもので、索引の資料しか選べない。出典には
+  // 「+」で足した共有ドライブやDiscordも出る（2026-09-13のCodex指摘）
+  assert.match(api, /export type SourceOrigin = AssistantOrigin \| "drive" \| "discord"/);
+  assert.match(api, /origin\?: SourceOrigin;/);
+});

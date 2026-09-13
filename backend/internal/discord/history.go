@@ -136,8 +136,20 @@ func (c Channel) public(guildID string) bool {
 
 // ChannelLog は1チャンネルぶんの発言。
 type ChannelLog struct {
-	Channel  string
+	Channel string
+	// ID は出典のリンクを組み立てるために持つ。**検索のときだけ入る。**
+	ID       string
 	Messages []Message
+}
+
+// FirstHit は検索で一致した発言を返す。出典のリンク先に使う。
+func (l ChannelLog) FirstHit() (Message, bool) {
+	for _, message := range l.Messages {
+		if message.Hit {
+			return message, true
+		}
+	}
+	return Message{}, false
 }
 
 // Options は集める範囲。

@@ -107,17 +107,33 @@ export function answerPlainText(turn: { answer: string; sources: Source[] }): st
  * 節が取れていない資料はページ名で代替する。空欄を出すより、
  * 少なくともどのページかは分かるほうがよい。
  */
-export function referenceSections(sources: Source[]): string[] {
+export type ReferenceItem = { label: string; url?: string };
+
+/**
+ * 回答が読んだ節の一覧。
+ *
+ * Discordの会話には節が無いので、チャンネル名をそのまま出し、**発言へ飛べる
+ * リンクを添える**。索引のページではないので出典カードには出せないが、
+ * 「どこを開けば確かめられるか」は示せる。示さないと、部員の発言を根拠に
+ * 答えたことが後から誰にも追えない（2026-09-13の指摘）。
+ */
+export function referenceItems(sources: Source[]): ReferenceItem[] {
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: ReferenceItem[] = [];
   for (const source of sources) {
-    for (const section of source.sections?.length ? source.sections : [source.title]) {
+    const sections = source.sections?.length ? source.sections : [source.title];
+    for (const section of sections) {
       if (!section || seen.has(section)) continue;
       seen.add(section);
-      out.push(section);
+      // 節はページの一部なので、リンクはページ単位のDiscordだけに付ける
+      out.push(source.origin === "discord" ? { label: section, url: source.url } : { label: section });
     }
   }
   return out;
+}
+
+export function referenceSections(sources: Source[]): string[] {
+  return referenceItems(sources).map((item) => item.label);
 }
 
 /** 共有・コピー用の平文。出典のURLも一緒に持ち出せるようにする。 */

@@ -151,16 +151,16 @@ const MaxSearchGuilds = discord.MaxSearchGuilds
 // DISCORD_SEARCH_CHANNELS を設定すると、さらにそのチャンネルだけへ絞れる。
 // searchDiscordFor は質問に関係する会話を拾う。guildID が空なら、新しい代から
 // MaxSearchGuilds 件まで横断する。
-func (s *Server) searchDiscordFor(ctx context.Context, question, guildID string) (transcript, note string) {
+func (s *Server) searchDiscordFor(ctx context.Context, question, guildID string) (transcript, note string, sources []pipeline.Source) {
 	if s.cfg.DiscordBotToken == "" {
-		return "", ""
+		return "", "", nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, discordSearchTimeout)
 	defer cancel()
 
 	targets := s.searchTargets(ctx, guildID)
 	if len(targets) == 0 {
-		return "", ""
+		return "", "", nil
 	}
 
 	var logs []discord.ChannelLog
@@ -183,6 +183,10 @@ func (s *Server) searchDiscordFor(ctx context.Context, question, guildID string)
 		// **どのサーバーの話かを見出しに残す。** 代が違えば別の話である
 		for i := range found {
 			found[i].Channel = guild.Name + " / " + found[i].Channel
+			// ⚠️ **出典を作る。** 会話は索引のページではないが、リンクは作れる。
+			// 作らないと「Discordの会話によれば」と答えながら、どの発言が
+			// 根拠なのか後から追えない（2026-09-13に本番で発覚）
+			sources = append(sources, discordSource(guild.ID, found[i]))
 		}
 		logs = append(logs, found...)
 		servers = append(servers, guild.Name)
@@ -190,9 +194,34 @@ func (s *Server) searchDiscordFor(ctx context.Context, question, guildID string)
 
 	transcript = discord.Transcript(logs)
 	if strings.TrimSpace(transcript) == "" {
-		return "", ""
+		return "", "", nil
 	}
-	return transcript, discord.SearchScopeAcross(question, servers, len(logs), discord.CountMessages(logs))
+	note = discord.SearchScopeAcross(question, servers, len(logs), discord.CountMessages(logs))
+	return transcript, note, sources
+}
+
+// discordSource は読んだチャンネルを出典に直す。
+//
+// 一致した発言があればその発言へ、無ければチャンネルの先頭へ飛ばす。
+// 最終更新には、そのチャンネルで読んだ**いちばん新しい発言の日付**を入れる
+// （資料の「最終更新」と同じ意味で使えるように）。
+func discordSource(guildID string, log discord.ChannelLog) pipeline.Source {
+	url := discord.ChannelURL(guildID, log.ID)
+	if hit, ok := log.FirstHit(); ok {
+		url = discord.MessageURL(guildID, log.ID, hit.ID)
+	}
+	newest := ""
+	for _, message := range log.Messages {
+		if at := message.Timestamp.In(japanTime).Format("2006-01-02"); at > newest {
+			newest = at
+		}
+	}
+	return pipeline.Source{
+		Title:      "#" + log.Channel,
+		URL:        url,
+		LastEdited: newest,
+		Origin:     pipeline.ToolDiscord,
+	}
 }
 
 // searchTargets は検索するサーバーを決める。

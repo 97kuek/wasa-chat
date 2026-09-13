@@ -130,7 +130,7 @@ func withContext(ctx context.Context, f *fetcher, hits []Message, names map[stri
 		sort.Slice(messages, func(a, b int) bool {
 			return messages[a].Timestamp.After(messages[b].Timestamp)
 		})
-		logs = append(logs, ChannelLog{Channel: names[channelID], Messages: messages})
+		logs = append(logs, ChannelLog{Channel: names[channelID], ID: channelID, Messages: messages})
 	}
 	// 見出しの順を毎回同じにする。走るたびに並びが変わると差分が読めない
 	sort.Slice(logs, func(a, b int) bool { return logs[a].Channel < logs[b].Channel })
@@ -145,6 +145,20 @@ func around(ctx context.Context, f *fetcher, channelID, messageID string) ([]Mes
 		return nil, err
 	}
 	return page, nil
+}
+
+// MessageURL は発言そのものを開くURL。
+//
+// **これが出典になる。** Discordの会話は索引のページではないが、
+// 「どこを開けば確かめられるか」は示せる。示さないと、部員の発言を根拠に
+// 答えたことが後から誰にも追えない（2026-09-13に本番で発覚）。
+func MessageURL(guildID, channelID, messageID string) string {
+	return fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildID, channelID, messageID)
+}
+
+// ChannelURL はチャンネルを開くURL。発言が特定できないときに使う。
+func ChannelURL(guildID, channelID string) string {
+	return fmt.Sprintf("https://discord.com/channels/%s/%s", guildID, channelID)
 }
 
 // SearchScope は画面へ出す「何を読んだか」の説明。

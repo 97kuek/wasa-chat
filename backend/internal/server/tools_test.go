@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/97kuek/wasa-chat/backend/internal/discord"
 	"github.com/97kuek/wasa-chat/backend/internal/index"
@@ -238,5 +239,47 @@ func TestCoAdminMayUseDrive(t *testing.T) {
 	}
 	if srv.mayUseDrive(t.Context(), "部員B") {
 		t.Fatal("許可していない利用者を通した")
+	}
+}
+
+// ⚠️ **Discordの会話も出典として出す。** 索引のページではないが、リンクは作れる。
+// 出さないと「Discordの会話によれば」と答えながら、どの発言が根拠なのか
+// 後から追えない（2026-09-13に本番で発覚）
+func TestDiscordSourceLinksToTheMessage(t *testing.T) {
+	hit := discord.Message{ID: "m1", Hit: true, Timestamp: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)}
+	older := discord.Message{ID: "m0", Timestamp: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)}
+
+	got := discordSource("g1", discord.ChannelLog{
+		Channel: "WASA42代 / 鳥コン / 全般", ID: "c1", Messages: []discord.Message{hit, older},
+	})
+	if got.URL != "https://discord.com/channels/g1/c1/m1" {
+		t.Fatalf("一致した発言へ飛ばない: %s", got.URL)
+	}
+	if got.Title != "#WASA42代 / 鳥コン / 全般" {
+		t.Fatalf("どのチャンネルか分からない: %s", got.Title)
+	}
+	if got.Origin != pipeline.ToolDiscord {
+		t.Fatalf("資料と区別できない: %s", got.Origin)
+	}
+	// 最終更新はいちばん新しい発言の日付
+	if got.LastEdited != "2026-03-01" {
+		t.Fatalf("最終更新が違う: %s", got.LastEdited)
+	}
+
+	// 一致した発言が分からなければチャンネルの先頭へ
+	noHit := discordSource("g1", discord.ChannelLog{Channel: "雑談", ID: "c2",
+		Messages: []discord.Message{older}})
+	if noHit.URL != "https://discord.com/channels/g1/c2" {
+		t.Fatalf("チャンネルへ飛ばない: %s", noHit.URL)
+	}
+}
+
+// Discordは参照欄に出すための呼び名を持つが、**索引には入らない**
+func TestDiscordIsNotAnIndexOrigin(t *testing.T) {
+	if pipeline.KnownOrigin(pipeline.ToolDiscord) {
+		t.Fatal("Discordを索引の出所として通している")
+	}
+	if pipeline.OriginLabel(pipeline.ToolDiscord) != "Discord" {
+		t.Fatal("参照欄での呼び名が無い")
 	}
 }
