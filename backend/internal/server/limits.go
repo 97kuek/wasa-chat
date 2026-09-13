@@ -1,6 +1,13 @@
 package server
 
-import "time"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
 
 // HTTP境界の上限は画面と永続化の前提を守る値であり、ハンドラーへ直書きしない。
 const (
@@ -50,3 +57,26 @@ const (
 	// 画像1枚（縮小後400KBまで）をbase64で載せる余地を持たせる。
 	maxAskBodyBytes = 1 << 20
 )
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("JSONの値が複数あります")
+		}
+		return err
+	}
+	return nil
+}
+
+func invalidJSONStatus(err error) int {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusBadRequest
+}

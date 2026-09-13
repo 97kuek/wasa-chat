@@ -3,37 +3,38 @@ package wiki
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/joho/godotenv"
 )
 
 func TestLoginUsesClientLogin(t *testing.T) {
-	t.Helper()
 	var loginAction string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	auth := New("https://wiki.example/api.php")
+	auth.transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("フォームを読めない: %v", err)
 		}
 		switch r.Form.Get("action") {
 		case "query":
-			_, _ = w.Write([]byte(`{"query":{"tokens":{"logintoken":"token+\\"}}}`))
+			return testResponse(r, `{"query":{"tokens":{"logintoken":"token+\\"}}}`), nil
 		case "clientlogin":
 			loginAction = r.Form.Get("action")
 			if r.Form.Get("username") != "WASA利用者" || r.Form.Get("password") != "wiki-password" {
 				t.Fatal("利用者名またはパスワードがWikiへ正しく中継されていない")
 			}
-			_, _ = w.Write([]byte(`{"clientlogin":{"status":"PASS","username":"WASA利用者"}}`))
+			return testResponse(r, `{"clientlogin":{"status":"PASS","username":"WASA利用者"}}`), nil
 		default:
 			t.Fatalf("想定外の認証経路: %s", r.Form.Get("action"))
 		}
-	}))
-	defer server.Close()
+		return nil, errors.New("想定外の認証経路")
+	})
 
-	user, err := New(server.URL).Login(context.Background(), "WASA利用者", "wiki-password")
+	user, err := auth.Login(context.Background(), "WASA利用者", "wiki-password")
 	if err != nil {
 		t.Fatalf("ログインに失敗した: %v", err)
 	}
@@ -43,20 +44,44 @@ func TestLoginUsesClientLogin(t *testing.T) {
 }
 
 func TestLoginRejectsBadCredentials(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	auth := New("https://wiki.example/api.php")
+	auth.transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("フォームを読めない: %v", err)
 		}
 		if r.Form.Get("action") == "query" {
-			_, _ = w.Write([]byte(`{"query":{"tokens":{"logintoken":"token"}}}`))
-			return
+			return testResponse(r, `{"query":{"tokens":{"logintoken":"token"}}}`), nil
 		}
-		_, _ = w.Write([]byte(`{"clientlogin":{"status":"FAIL"}}`))
-	}))
-	defer server.Close()
+		return testResponse(r, `{"clientlogin":{"status":"FAIL"}}`), nil
+	})
 
-	if _, err := New(server.URL).Login(context.Background(), "利用者", "wrong"); !errors.Is(err, ErrBadCredentials) {
+	if _, err := auth.Login(context.Background(), "利用者", "wrong"); !errors.Is(err, ErrBadCredentials) {
 		t.Fatalf("誤ったパスワードが弾かれていない: err=%v", err)
+	}
+}
+
+func TestLoginTreatsInvalidWikiResponseAsUnavailable(t *testing.T) {
+	auth := New("https://wiki.example/api.php")
+	auth.transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return testResponse(req, `not-json`), nil
+	})
+	_, err := auth.Login(context.Background(), "利用者", "password")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("壊れたWiki応答を認証失敗として扱った: %v", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func testResponse(req *http.Request, body string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     http.StatusText(http.StatusOK),
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
 	}
 }
 

@@ -37,13 +37,50 @@ func TestRefundSurvivesCancelledRequestContext(t *testing.T) {
 	}
 }
 
+// Discordの回答処理はHTTP応答後も続き、期限切れで失敗することがある。
+// その時点のcontextを返却へ再利用するとFirestoreだけ利用回数が戻らない。
+func TestDiscordRefundSurvivesCancelledJobContext(t *testing.T) {
+	shared := &contextRecordingStore{Memory: state.NewMemory()}
+	srv := &Server{cfg: Config{SessionSecret: "テスト用の固定鍵テスト用の固定鍵", DailyLimit: 30}, state: shared}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	refund, message := srv.takeDiscordQuota(ctx, "discord-user")
+	if refund == nil {
+		t.Fatalf("利用回数を確保できない: %s", message)
+	}
+	cancel()
+	refund()
+
+	if shared.refundErr != nil {
+		t.Errorf("Discordの返却へ期限切れcontextを渡した: %v", shared.refundErr)
+	}
+}
+
+func TestAdminAuditSurvivesCancelledRequestContext(t *testing.T) {
+	shared := &contextRecordingStore{Memory: state.NewMemory()}
+	srv := &Server{cfg: Config{SessionSecret: "テスト用の固定鍵テスト用の固定鍵"}, state: shared}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	srv.saveAdminAudit(ctx, "管理者", "admin.test", "対象")
+	if shared.auditErr != nil {
+		t.Errorf("監査ログへキャンセル済みcontextを渡した: %v", shared.auditErr)
+	}
+}
+
 // 渡されたcontextが生きているかを記録するだけのStore。
 type contextRecordingStore struct {
 	*state.Memory
 	refundErr error
+	auditErr  error
 }
 
 func (c *contextRecordingStore) Refund(ctx context.Context, user, day string) error {
 	c.refundErr = ctx.Err()
 	return c.Memory.Refund(ctx, user, day)
+}
+
+func (c *contextRecordingStore) SaveAdminAudit(ctx context.Context, audit state.AdminAudit) error {
+	c.auditErr = ctx.Err()
+	return c.Memory.SaveAdminAudit(ctx, audit)
 }

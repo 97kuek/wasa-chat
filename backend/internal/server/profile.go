@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -15,8 +14,8 @@ func (s *Server) handleUpdateProfileIcon(w http.ResponseWriter, r *http.Request)
 	var body struct {
 		Icon string `json:"icon"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxProfileBodyBytes)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "画像を読み込めませんでした"})
+	if err := decodeJSON(w, r, maxProfileBodyBytes, &body); err != nil {
+		writeJSON(w, invalidJSONStatus(err), map[string]string{"error": "画像を読み込めませんでした"})
 		return
 	}
 	if err := assistant.ValidateIcon(body.Icon); err != nil {

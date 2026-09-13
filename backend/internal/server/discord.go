@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -38,6 +39,10 @@ const discordAnswerTimeout = 5 * time.Minute
 // discordChoicesTimeout は補完の候補を作るまでの上限。
 // Discordは3秒待ってくれるので、その手前で諦めて空の候補を返す。
 const discordChoicesTimeout = 2 * time.Second
+
+// キュー投入もDiscordの初回応答（3秒）に含まれる。資格情報の取得や
+// Cloud Tasksが詰まってもDeferred応答の期限を越えないよう手前で打ち切る。
+const discordEnqueueTimeout = 2 * time.Second
 
 func (s *Server) handleDiscord(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.DiscordPublicKey == "" {
@@ -71,7 +76,7 @@ func (s *Server) handleDiscord(w http.ResponseWriter, r *http.Request) {
 	case discord.TypePing:
 		writeRaw(w, discord.Pong())
 	case discord.TypeApplicationCommand:
-		s.startDiscordAnswer(&interaction)
+		s.startDiscordAnswer(r.Context(), &interaction)
 		// **3秒以内に返す。** 実際の回答は後から書き換える
 		writeRaw(w, discord.Deferred())
 	case discord.TypeAutocomplete:
@@ -130,7 +135,7 @@ func (s *Server) assistantChoices(ctx context.Context, typed string) []discord.C
 //
 // **元のリクエストの context を使わない。** Discordへ「考えています」を返した
 // 時点でHTTPは終わるため、そのcontextは即座に切れる。回答は別の寿命で作る。
-func (s *Server) startDiscordAnswer(interaction *discord.Interaction) {
+func (s *Server) startDiscordAnswer(requestContext context.Context, interaction *discord.Interaction) {
 	// goroutine へ渡す前に値を写す。interaction はこの後で使い回さない
 	command := interaction.CommandName()
 	question := strings.TrimSpace(interaction.Question())
@@ -172,7 +177,9 @@ func (s *Server) startDiscordAnswer(interaction *discord.Interaction) {
 	// しかCPUを割り当てないため、応答後の goroutine は実行が保証されない
 	// （docs/09 A-11）。積む呼び出しは元のリクエストの中で終わるので、
 	// 「考えています」を3秒以内に返すことと両立する
-	if s.enqueueDiscordJob(context.Background(), job) {
+	enqueueContext, cancel := context.WithTimeout(requestContext, discordEnqueueTimeout)
+	defer cancel()
+	if s.enqueueDiscordJob(enqueueContext, job) {
 		return
 	}
 	// キューが未設定・または積めなかったときは、いままでどおり goroutine で作る。
@@ -186,7 +193,28 @@ func (s *Server) startDiscordAnswer(interaction *discord.Interaction) {
 
 // runDiscordJob は回答を作り、「考えています」を書き換える。
 // goroutine から呼ばれる場合と、Cloud Tasks から呼ばれる場合がある。
+//
+// ⚠️ **ここで panic を受け止める。** 呼ばれ方が2つあり、どちらも素通しにすると重い。
+//
+//   - goroutine 経由: 回収する者がいないので**プロセスごと落ちる**。
+//     同時に処理中だった他の人の質問まで巻き添えになる
+//   - Cloud Tasks 経由: 応答が返らないので**再送され、同じ質問でLLMをもう一度呼ぶ**
+//     （このファイルが 200 を返し続ける理由と同じ。tasks.go 参照）
+//
+// 実際に discord.FormatAnswer で落ちる経路があった（本文が空で出典が長いとき）。
+// 直したが、回答生成の経路は長いので、受け止める場所そのものを用意しておく。
 func (s *Server) runDiscordJob(ctx context.Context, job discordJob) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		log.Printf("Discordの回答作成が異常終了しました（command=%s）: %v\n%s",
+			job.Command, recovered, debug.Stack())
+		// 「考えています」を残したまま黙って消えない。本人にだけ失敗を伝える
+		s.refuseDiscord(ctx, job.Token, "回答の作成中に問題が起きました。もう一度お試しください。")
+	}()
+
 	target := recapTarget{
 		guildID:   job.GuildID,
 		channelID: job.ChannelID,
@@ -272,7 +300,9 @@ func (s *Server) takeDiscordQuota(ctx context.Context, userID string) (refund fu
 		return nil, fmt.Sprintf("本日の利用回数（%d回）を使い切りました。日付が変わるとリセットされます。", s.cfg.DailyLimit)
 	}
 	return func() {
-		if err := s.state.Refund(ctx, userKey, day); err != nil {
+		// 回答失敗時には処理期限も切れていることがある。Firestoreの返却を
+		// 成功させるため、確保時の値だけ引き継いでキャンセルは切り離す。
+		if err := s.refund(ctx, userKey, day); err != nil {
 			log.Printf("Discordの利用回数の返却に失敗: %v", err)
 		}
 	}, ""
@@ -617,13 +647,17 @@ func (s *Server) saveDiscordHistory(ctx context.Context, userID, channelID, ques
 	id := discordChatID(channelID)
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	chats, err := s.state.ListChats(ctx, userKey, maxChats)
+	if err != nil {
+		// 読めない状態で新規チャットを保存すると、既存履歴を1往復で上書きする。
+		log.Printf("Discordの履歴を読めないため保存を見送ります: %v", err)
+		return
+	}
 	chat := state.Chat{ID: id, Title: "Discord", CreatedAt: now}
-	if chats, err := s.state.ListChats(ctx, userKey, maxChats); err == nil {
-		for _, found := range chats {
-			if found.ID == id {
-				chat = found
-				break
-			}
+	for _, found := range chats {
+		if found.ID == id {
+			chat = found
+			break
 		}
 	}
 	chat.UpdatedAt = now

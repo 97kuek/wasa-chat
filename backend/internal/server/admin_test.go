@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,25 @@ import (
 	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
 )
+
+type adminRoleReadErrorStore struct {
+	*state.Memory
+	err error
+}
+
+func TestAdminEndpointReportsRoleStoreFailure(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	srv.state = &adminRoleReadErrorStore{Memory: state.NewMemory(), err: errors.New("読込失敗")}
+	res := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(res, srv.testRequest(http.MethodGet, "/api/admin/overview", "", "共同管理者"))
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ロール保存先の障害を権限不足として返した: status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func (s *adminRoleReadErrorStore) GetAdminRole(context.Context, string) (state.AdminRole, bool, error) {
+	return state.AdminRole{}, false, s.err
+}
 
 func TestAdminOverviewRequiresAdminRole(t *testing.T) {
 	srv, _ := testServer(t, []string{"管理者"})
@@ -59,8 +79,8 @@ func TestAdminOverviewShowsNamesWithoutQuestionContentOrUserKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	pacificDay, _ := pacificDayAndReset(now)
-	if err := shared.RecordAPIRequest(ctx, pacificDay, "test-model", now); err != nil {
-		t.Fatal(err)
+	if reserved, err := shared.ReserveAPIRequest(ctx, pacificDay, "test-model", 500, now); err != nil || !reserved {
+		t.Fatalf("API試行を予約できない: reserved=%v err=%v", reserved, err)
 	}
 
 	res := httptest.NewRecorder()
@@ -163,6 +183,32 @@ func TestOwnerCanGrantAndRevokeCoAdmin(t *testing.T) {
 	}
 	if !actions["admin.role.grant"] || !actions["admin.role.revoke"] {
 		t.Fatalf("権限変更の監査ログが不足: %+v", audits)
+	}
+}
+
+func TestGrantingCoAdminDoesNotOverwriteRoleWhenReadFails(t *testing.T) {
+	shared := state.NewMemory()
+	srv, _ := testServer(t, []string{"主管理者"})
+	srv.state = &adminRoleReadErrorStore{Memory: shared, err: errors.New("読込失敗")}
+	ctx := context.Background()
+	key := srv.userKey("共同管理者候補")
+	if err := shared.SaveUserProfile(ctx, key, "共同管理者候補", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := shared.SaveAdminRole(ctx, key, state.AdminRole{
+		Username: "共同管理者候補", Tools: []string{"drive"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(res, srv.testRequest(http.MethodPost, "/api/admin/roles", `{"username":"共同管理者候補","enabled":true}`, "主管理者"))
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("読込失敗を無視した: status=%d body=%s", res.Code, res.Body.String())
+	}
+	role, ok, err := shared.GetAdminRole(ctx, key)
+	if err != nil || !ok || len(role.Tools) != 1 || role.Tools[0] != "drive" || role.Role != "" {
+		t.Fatalf("既存の許可を書き換えた: ok=%v role=%+v err=%v", ok, role, err)
 	}
 }
 

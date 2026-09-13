@@ -160,8 +160,9 @@ const MaxSearchGuilds = discord.MaxSearchGuilds
 // **Discordに入っていない人が非公開チャンネルの中身を読める**（docs/09 A-12）。
 //
 // DISCORD_SEARCH_CHANNELS を設定すると、さらにそのチャンネルだけへ絞れる。
-// searchDiscordFor は質問に関係する会話を拾う。guildID が空なら、新しい代から
-// MaxSearchGuilds 件まで横断する。
+//
+// guildID が空なら横断するが、**どのサーバーが選ばれるかは名前順**である
+// （searchTargets 参照）。代を指定したいときは画面のサーバー選択で明示する。
 func (s *Server) searchDiscordFor(ctx context.Context, question, previous, guildID string) (transcript, note string, sources []pipeline.Source) {
 	if s.cfg.DiscordBotToken == "" {
 		return "", "", nil

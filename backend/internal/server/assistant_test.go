@@ -262,3 +262,19 @@ func TestUpdateAssistantKeepsIdentity(t *testing.T) {
 		t.Fatalf("IDか作成者が書き換わった: %+v", list)
 	}
 }
+
+func TestUpdateAssistantUpdatesGlossary(t *testing.T) {
+	srv, shared := testServer(t, nil)
+	seedAssistant(t, shared, "mine", "43 Taro")
+
+	res := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(res, srv.testRequest(http.MethodPut, "/api/assistants/mine",
+		`{"name":"名前","instruction":"指示","glossary":[{"term":"TF","meaning":"テストフライト"}]}`, "43 Taro"))
+	if res.Code != http.StatusOK {
+		t.Fatalf("編集に失敗: %d %s", res.Code, res.Body)
+	}
+	list, err := shared.ListAssistants(context.Background())
+	if err != nil || len(list) != 1 || len(list[0].Glossary) != 1 || list[0].Glossary[0].Term != "TF" {
+		t.Fatalf("用語集を更新できていない: list=%+v err=%v", list, err)
+	}
+}

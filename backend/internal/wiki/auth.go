@@ -34,6 +34,9 @@ var (
 type Authenticator struct {
 	endpoint string
 	timeout  time.Duration
+	// transportはテストでMediaWikiの応答だけを差し替える内部seam。
+	// 本番はnilのままhttp.DefaultTransportを使う。
+	transport http.RoundTripper
 }
 
 func New(apiEndpoint string) *Authenticator {
@@ -48,7 +51,7 @@ func (a *Authenticator) Login(ctx context.Context, username, password string) (s
 	if err != nil {
 		return "", err
 	}
-	client := &http.Client{Jar: jar, Timeout: a.timeout}
+	client := &http.Client{Jar: jar, Timeout: a.timeout, Transport: a.transport}
 
 	token, err := a.loginToken(ctx, client)
 	if err != nil {
@@ -75,7 +78,12 @@ func (a *Authenticator) post(ctx context.Context, client *http.Client, form url.
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%w: %s", ErrUnavailable, resp.Status)
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		// 200でもHTMLや途中で切れたJSONが返ることがある。認証失敗へ落とすと
+		// 利用者の入力ミスに見えるため、上流障害として扱う。
+		return fmt.Errorf("%w: 応答を解釈できません: %v", ErrUnavailable, err)
+	}
+	return nil
 }
 
 func (a *Authenticator) loginToken(ctx context.Context, client *http.Client) (string, error) {

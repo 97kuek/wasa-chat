@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,12 @@ import (
 	"github.com/97kuek/wasa-chat/backend/internal/recap"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
 )
+
+type chatListErrorStore struct{ *state.Memory }
+
+func (s *chatListErrorStore) ListChats(context.Context, string, int) ([]state.Chat, error) {
+	return nil, errors.New("履歴の読込失敗")
+}
 
 func discordServer(t *testing.T, publicKey string) *Server {
 	t.Helper()
@@ -245,6 +253,26 @@ func TestDiscordHistoryKeepsRecentTurns(t *testing.T) {
 	}
 	if got[len(got)-1].Question != "質問9" {
 		t.Fatalf("直前のやりとりが残っていない: %+v", got)
+	}
+}
+
+func TestDiscordHistoryReadFailureDoesNotOverwriteExistingHistory(t *testing.T) {
+	shared := state.NewMemory()
+	srv := discordServer(t, "")
+	srv.state = &chatListErrorStore{Memory: shared}
+	userKey := srv.userKey("discord:user")
+	existing := state.Chat{
+		ID: discordChatID("channel"), Title: "Discord", UpdatedAt: "2026-09-13T00:00:00Z",
+		Turns: []state.Turn{{Question: "前の質問", Answer: "前の回答"}},
+	}
+	if err := shared.SaveChat(context.Background(), userKey, existing, maxChats); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.saveDiscordHistory(context.Background(), "user", "channel", "新しい質問", "新しい回答")
+	chats, err := shared.ListChats(context.Background(), userKey, maxChats)
+	if err != nil || len(chats) != 1 || len(chats[0].Turns) != 1 || chats[0].Turns[0].Question != "前の質問" {
+		t.Fatalf("読めなかった履歴を新規チャットで上書きした: chats=%+v err=%v", chats, err)
 	}
 }
 

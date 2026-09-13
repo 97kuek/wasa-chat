@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -87,7 +86,10 @@ func (s *Server) saveAdminAudit(ctx context.Context, actor, action, target strin
 		ID:    s.eventID("admin", actor+"|"+action+"|"+target, now),
 		Actor: actor, Action: action, Target: target, OccurredAt: now,
 	}
-	if err := s.state.SaveAdminAudit(ctx, audit); err != nil {
+	// 権限変更が保存された直後に利用者が切断しても、監査ログだけを落とさない。
+	saveContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if err := s.state.SaveAdminAudit(saveContext, audit); err != nil {
 		log.Printf("管理者監査ログの保存に失敗: %v", err)
 	}
 }
@@ -358,8 +360,8 @@ func (s *Server) handleAdminRole(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Enabled  bool   `json:"enabled"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSmallRequestBodyBytes)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "リクエストが不正です"})
+	if err := decodeJSON(w, r, maxSmallRequestBodyBytes, &body); err != nil {
+		writeJSON(w, invalidJSONStatus(err), map[string]string{"error": "リクエストが不正です"})
 		return
 	}
 	username := strings.TrimSpace(body.Username)
@@ -391,7 +393,13 @@ func (s *Server) handleAdminRole(w http.ResponseWriter, r *http.Request) {
 		}
 		now := time.Now().UTC()
 		// **既にある許可を消さない。** 同じ文書に参照先の許可（Tools）も入っている
-		grant, _, _ := s.state.GetAdminRole(r.Context(), key)
+		grant, _, err := s.state.GetAdminRole(r.Context(), key)
+		if err != nil {
+			// 既存の参照先許可を読めないまま保存すると、空のToolsで上書きする。
+			log.Printf("共同管理者の既存許可の読み込みに失敗: %v", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "管理者ロールを読み込めませんでした"})
+			return
+		}
 		grant.Username, grant.Role, grant.GrantedBy, grant.GrantedAt = username, "co_admin", actor, now
 		if err := s.state.SaveAdminRole(r.Context(), key, grant); err != nil {
 			log.Printf("共同管理者の保存に失敗: %v", err)
@@ -485,8 +493,8 @@ func (s *Server) handleToolGrant(w http.ResponseWriter, r *http.Request) {
 		Tool     string `json:"tool"`
 		Enabled  bool   `json:"enabled"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSmallRequestBodyBytes)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "リクエストが不正です"})
+	if err := decodeJSON(w, r, maxSmallRequestBodyBytes, &body); err != nil {
+		writeJSON(w, invalidJSONStatus(err), map[string]string{"error": "リクエストが不正です"})
 		return
 	}
 	username := strings.TrimSpace(body.Username)

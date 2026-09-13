@@ -39,18 +39,16 @@ const taskTimeout = 5 * time.Minute
 // **interaction をそのまま運ばない。** 必要な値だけにすれば、
 // Discordの形が変わってもここは壊れない。
 type discordJob struct {
-	Command     string          `json:"command"`
-	Question    string          `json:"question"`
-	AssistantID string          `json:"assistantId"`
-	Token       string          `json:"token"`
-	UserID      string          `json:"userId"`
-	Username    string          `json:"username"`
-	GuildID     string          `json:"guildId"`
-	ChannelID   string          `json:"channelId"`
-	Scope       string          `json:"scope"`
-	Days        int             `json:"days"`
-	Signature   string          `json:"-"`
-	raw         json.RawMessage `json:"-"`
+	Command     string `json:"command"`
+	Question    string `json:"question"`
+	AssistantID string `json:"assistantId"`
+	Token       string `json:"token"`
+	UserID      string `json:"userId"`
+	Username    string `json:"username"`
+	GuildID     string `json:"guildId"`
+	ChannelID   string `json:"channelId"`
+	Scope       string `json:"scope"`
+	Days        int    `json:"days"`
 }
 
 // signJob は仕事に署名する。

@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -73,5 +74,25 @@ func TestAppCookieUsesCrossSiteSecurityAttributes(t *testing.T) {
 	cookie := appCookie("test", "value", 60)
 	if !cookie.HttpOnly || !cookie.Secure || !cookie.Partitioned || cookie.SameSite != http.SameSiteNoneMode {
 		t.Fatalf("Cookieのセキュリティ属性が不足: %+v", cookie)
+	}
+}
+
+func TestOversizedJSONReturnsRequestEntityTooLarge(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	body := `{"username":"利用者","password":"` + strings.Repeat("x", maxSmallRequestBodyBytes) + `"}`
+	res := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body)))
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("大きすぎる本文の状態コード=%d want=%d", res.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestJSONRejectsTrailingValue(t *testing.T) {
+	srv, _ := testServer(t, nil)
+	res := httptest.NewRecorder()
+	req := srv.testRequest(http.MethodPut, "/api/profile/icon", `{"icon":""} {"icon":"data:image/png;base64,AA=="}`, "利用者")
+	srv.Routes().ServeHTTP(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("JSONの後続値を受理した: status=%d body=%s", res.Code, res.Body.String())
 	}
 }
