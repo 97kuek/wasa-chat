@@ -63,8 +63,14 @@ func NewLive(ix *Index, location string) *Live {
 	live.lastError.Store("")
 	live.lastOK.Store("")
 	// **起動直後の版を印として控える。** 空のままだと、最初の確認で
-	// 「変わった」と判断して3.4MBを読み直すことになる（2026-09-12にCodexが指摘）
-	if stamp, err := live.stampOf(context.Background()); err == nil {
+	// 「変わった」と判断して3.4MBを読み直すことになる（2026-09-12にCodexが指摘）。
+	//
+	// ⚠️ **ここで時間を切る。** GCSへの問い合わせであり、応答が無いと
+	// 起動そのものが止まる（索引はもう読めているのに、印を取るためだけに待つ）。
+	// 取れなくても Reload が次の周回で取り直すので、諦めてよい
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if stamp, err := live.stampOf(ctx); err == nil {
 		live.stamp.Store(stamp)
 		live.lastOK.Store(time.Now().UTC().Format(time.RFC3339))
 	}

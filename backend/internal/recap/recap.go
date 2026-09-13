@@ -29,6 +29,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/97kuek/wasa-chat/backend/internal/llm"
 )
@@ -49,13 +50,23 @@ const maxTokens = 1200
 // これを超えたら**切り捨てずに分割する**。古いほうを捨てると、前の代で出た案が
 // 黙って消える（2026-09-13の指摘）。分割して部分要約を作り、それをまとめる。
 //
-// 6万字は実測ではなく見積もりである。日本語はGeminiでおおむね1文字1トークン前後、
+// ⚠️ **文字で数える（バイトではない）。** 以前は len() で数えており、日本語は
+// UTF-8で1文字3バイトなので**実際の上限は約2万字**だった。数字と単位が
+// 食い違っていると塊の大きさを見積もれないので、実挙動を変えないまま
+// 当時と同じ大きさ（60,000バイト ÷ 3 = 20,000字）を文字で書き直してある。
+//
+// 2万字は実測ではなく見積もりである。日本語はGeminiでおおむね1文字1トークン前後、
 // 無料枠の毎分トークン数に余裕を持たせてこの値にした。**測ったら docs/08 へ記録し、
 // この数字を直すこと。**
-const ChunkLimit = 60000
+const ChunkLimit = 20000
 
 // maxChunks は分割の上限。1回のコマンドが使う呼び出し回数は最大で
 // maxChunks + 1 になる（部分要約 + まとめ）。無料枠のRPDは呼び出し回数で減る。
+//
+// ⚠️ **塊の数が先に決まるので、1塊が ChunkLimit を超えることがある。**
+// ログが ChunkLimit × maxChunks（＝12万字）を超えると、行数で等分した結果
+// 1塊がそれより大きくなる。呼び出し回数（＝無料枠の消費）を固定するほうを
+// 優先しているためで、発言を捨てているわけではない。
 const maxChunks = 6
 
 // systemRules は利用者の入力より強い立場で効かせる規則。
@@ -222,7 +233,7 @@ func (r *Recap) finish(ctx context.Context, kind Kind, transcript string) (strin
 // だと、詰め込みの境目の都合で max+1 個になることがある（テストで露見）。
 // 呼び出し回数（＝無料枠の消費）は固定したいので、数のほうを先に決める。
 func split(transcript string, limit, max int) []string {
-	if len(transcript) <= limit {
+	if utf8.RuneCountInString(transcript) <= limit {
 		return []string{transcript}
 	}
 	lines := strings.Split(transcript, "\n")
@@ -237,21 +248,26 @@ func split(transcript string, limit, max int) []string {
 	return chunks
 }
 
-// pack は行を limit に収まるよう順に詰める。
+// pack は行を limit に収まるよう順に詰める。**文字で数える**（ChunkLimit 参照）。
 func pack(lines []string, limit int) []string {
 	var chunks []string
 	var current strings.Builder
+	used := 0
 	for _, line := range lines {
-		if current.Len() > 0 && current.Len()+len(line)+1 > limit {
+		length := utf8.RuneCountInString(line)
+		if used > 0 && used+length+1 > limit {
 			chunks = append(chunks, current.String())
 			current.Reset()
+			used = 0
 		}
-		if current.Len() > 0 {
+		if used > 0 {
 			current.WriteByte('\n')
+			used++
 		}
 		current.WriteString(line)
+		used += length
 	}
-	if current.Len() > 0 {
+	if used > 0 {
 		chunks = append(chunks, current.String())
 	}
 	return chunks
