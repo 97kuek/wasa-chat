@@ -289,6 +289,13 @@ type Scope struct {
 	DiscordLog string
 	// DiscordNote は何を読んだかの説明。回答の材料ではなく、画面へ出す説明用
 	DiscordNote string
+	// CalendarLog は部の予定。**索引には入っていない。**
+	// 予定は時間で意味が変わるので、質問のたびに取りに行く
+	CalendarLog string
+	// CalendarNote は何を読んだかの説明。画面へ出す
+	CalendarNote string
+	// CalendarSources は読んだ予定表。参照欄に出す
+	CalendarSources []Source
 	// DiscordSources は読んだチャンネルと、そこへ飛べるリンク。
 	//
 	// ⚠️ **出典として出す。** Discordの会話は索引のページではないが、
@@ -308,6 +315,26 @@ func NewScope(assistant *state.Assistant, tools []string) Scope {
 		}
 	}
 	return scope
+}
+
+// calendarSection は、部の予定を資料の後ろへ置く。
+//
+// ⚠️ **資料と同じ見出しにしない。** 予定は「そう決まっている」であって、
+// 資料に書かれた事実とは違う。資料番号 [n] も振らない（索引のページではない）。
+//
+// **今日を境に分けてから渡す。** 日付の比較をモデルに任せると、終わった予定を
+// 「これからの予定です」と書く。
+func calendarSection(sc Scope) string {
+	if strings.TrimSpace(sc.CalendarLog) == "" {
+		return ""
+	}
+	return "\n# 部の予定（資料ではありません）\n\n" +
+		"下は引き継ぎ資料ではなく、カレンダーに登録された予定です。次の規則で扱ってください。\n\n" +
+		"- **予定に書かれていることを「資料にある」と書かない。** 出典番号 [n] も付けない\n" +
+		"- 予定を根拠にするときは「カレンダーによると」と、予定由来だと明示する\n" +
+		"- 「終わった予定」と「これからの予定」は既に分けてある。**自分で日付を比べ直さない**\n" +
+		"- 予定に無いことを補わない。中止・変更が反映されていない可能性がある\n\n" +
+		sc.CalendarLog + "\n"
 }
 
 // discordSection は、拾ってきた会話を資料の後ろへ置く。
@@ -473,6 +500,7 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 	// リンクは作れる。入れないと「Discordの会話によれば」と答えながら、
 	// どのチャンネルの話か後から追えない
 	sources = append(sources, sc.DiscordSources...)
+	sources = append(sources, sc.CalendarSources...)
 	emit(Event{Type: "pages", Pages: sources})
 
 	chunkStarted := time.Now()
@@ -546,7 +574,7 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 		Prompt: driveTOCSection(ix, sc) + fmt.Sprintf(answerPrompt,
 			time.Now().In(jst).Format("2006年1月2日"),
 			strings.Join(blocks, "\n\n---\n\n"),
-			discordSection(sc)+assistantpkg.PromptSection(assistant),
+			discordSection(sc)+calendarSection(sc)+assistantpkg.PromptSection(assistant),
 			conversationSection(history),
 			question),
 		MaxTokens: 1500,
@@ -587,11 +615,18 @@ func markUsedSources(sources []Source, answer string, sc Scope) {
 		}
 		sources[number-1].Used = true
 	}
-	if strings.TrimSpace(sc.DiscordLog) == "" {
+	// 会話と予定は番号を持たない（索引のページではないため）。
+	// 渡した時点で根拠の候補なので、渡したなら使った扱いにする
+	markExtraUsed(sources, ToolDiscord, sc.DiscordLog)
+	markExtraUsed(sources, ToolCalendar, sc.CalendarLog)
+}
+
+func markExtraUsed(sources []Source, origin, log string) {
+	if strings.TrimSpace(log) == "" {
 		return
 	}
 	for i := range sources {
-		if sources[i].Origin == ToolDiscord {
+		if sources[i].Origin == origin {
 			sources[i].Used = true
 		}
 	}
@@ -721,7 +756,8 @@ var originLabels = map[string]string{
 	OriginDrive: "共有ドライブ",
 	// Discordは索引に入らないが、**出典としては出す**。
 	// 参照欄で資料と区別できないと、部員の発言を資料の記述と取り違える
-	ToolDiscord: "Discord",
+	ToolDiscord:  "Discord",
+	ToolCalendar: "カレンダー",
 }
 
 // OriginLabel は出所を利用者に見せる名前へ直す。
@@ -745,7 +781,7 @@ func OriginLabel(source string) string {
 // 呼び名を持っているだけで、索引のページとしては存在しない。
 // もし索引に source="discord" のページが現れたら、それは作り間違いである。
 func KnownOrigin(source string) bool {
-	if source == ToolDiscord {
+	if source == ToolDiscord || source == ToolCalendar {
 		return false
 	}
 	_, ok := originLabels[source]
@@ -1194,4 +1230,7 @@ const (
 	// ToolDiscord は公開チャンネルの会話。索引には入れない
 	// （会話は流れるもので量も多く、資料とは性質が違う）
 	ToolDiscord = "discord"
+	// ToolCalendar は部の予定。**索引には入れない。**
+	// 予定は時間で意味が変わる（「次のTFはいつ」の答えは今日が何日かで変わる）
+	ToolCalendar = "calendar"
 )

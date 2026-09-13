@@ -51,6 +51,12 @@ type Config struct {
 	// **未設定ならボットが入っている先すべて。** 代ごとにDiscordのサーバーが
 	// 変わるため、設定で1つに固定しない（利用者が画面で選ぶ）
 	DiscordGuildIDs []string
+	// CalendarIDs は読む予定表。**`primary` を避けて部の予定表だけを指定すれば、
+	// 同じアカウントの私的な予定は読まない**（docs/09 A-13）
+	CalendarIDs []string
+	// CalendarServiceAccount は予定表の共有相手に追加すべきアドレス。
+	// **予定は画面を出すサービスが読む**ので、更新Jobとは別のアドレスになる
+	CalendarServiceAccount string
 	// DriveServiceAccount は共有フォルダの共有相手に追加すべきアドレス。
 	// **管理画面へ出すためだけに持つ。** 実際にDriveを読むのは更新Jobで、
 	// このサービスは読まない（表示と実体が違うので、値は運用側が入れる）
@@ -1042,6 +1048,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	// 画面の指定をそのまま信じると、範囲外の資料が読まれる（2026-09-13のCodex）
 	tools := s.allowedTools(r.Context(), user, body.Tools)
 	scope := pipeline.NewScope(selected, tools)
+	if slices.Contains(tools, pipeline.ToolCalendar) {
+		scope.CalendarLog, scope.CalendarNote, scope.CalendarSources = s.readCalendar(r.Context())
+	}
 	if slices.Contains(tools, pipeline.ToolDiscord) {
 		// **回答の前に拾う。** 索引には入っていないので、質問文で検索して
 		// 見つかった会話を材料として渡す（資料とは別の見出しで扱う）

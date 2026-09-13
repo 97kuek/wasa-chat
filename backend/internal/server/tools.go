@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/97kuek/wasa-chat/backend/internal/calendar"
 	"github.com/97kuek/wasa-chat/backend/internal/discord"
 	"github.com/97kuek/wasa-chat/backend/internal/pipeline"
 )
@@ -129,7 +130,17 @@ func (s *Server) tools(ctx context.Context, user string) []Tool {
 			discordTool.Servers = append(discordTool.Servers, ToolServer{ID: guild.ID, Name: guild.Name})
 		}
 	}
-	return []Tool{drive, discordTool}
+	calendarTool := Tool{
+		ID:          pipeline.ToolCalendar,
+		Name:        "カレンダー",
+		Description: "部の予定表から、これからの予定と終わった予定を読みます",
+	}
+	if len(s.cfg.CalendarIDs) == 0 {
+		calendarTool.Reason = "CALENDAR_IDS が未設定です"
+	} else {
+		calendarTool.Available = true
+	}
+	return []Tool{drive, discordTool, calendarTool}
 }
 
 // discordSearchTimeout は画面からのDiscord検索に使える時間。
@@ -281,4 +292,41 @@ func (s *Server) searchableChannels(ctx context.Context, guildID string) []disco
 		}
 	}
 	return channels
+}
+
+// calendarTimeout は予定を取りに行く上限。**回答そのものを遅らせない。**
+// 取れなければ資料だけで答える。
+const calendarTimeout = 10 * time.Second
+
+// readCalendar は部の予定を読む。
+//
+// ⚠️ **索引には入れない。** 予定は時間で意味が変わる（「次のTFはいつ」の答えは
+// 今日が何日かで変わる）。質問のたびに取りに行く（internal/calendar を参照）。
+func (s *Server) readCalendar(ctx context.Context) (transcript, note string, sources []pipeline.Source) {
+	if len(s.cfg.CalendarIDs) == 0 {
+		return "", "", nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
+	defer cancel()
+
+	events, err := calendar.Fetch(ctx, s.cfg.CalendarIDs)
+	if err != nil {
+		// **黙って資料だけで答える。** 予定が読めないことは、質問に答えられない
+		// ことを意味しない
+		log.Printf("カレンダーを読めません（資料だけで答えます）: %v", err)
+		return "", "", nil
+	}
+	transcript = calendar.Transcript(events, time.Now())
+	if strings.TrimSpace(transcript) == "" {
+		return "", "", nil
+	}
+	names := calendar.CalendarNames(events)
+	for _, name := range names {
+		sources = append(sources, pipeline.Source{
+			Title:  name,
+			URL:    "https://calendar.google.com/",
+			Origin: pipeline.ToolCalendar,
+		})
+	}
+	return transcript, calendar.ScopeNote(len(events), names), sources
 }

@@ -371,10 +371,12 @@ func main() {
 		DiscordAppID:     os.Getenv("DISCORD_APP_ID"),
 		DiscordBotToken:  os.Getenv("DISCORD_BOT_TOKEN"),
 		// どちらも未設定でよい。絞りたいときだけ指定する（docs/09 A-12）
-		DiscordGuildIDs:       splitList(os.Getenv("DISCORD_GUILD_IDS")),
-		DriveServiceAccount:   os.Getenv("DRIVE_SERVICE_ACCOUNT"),
-		DiscordSearchChannels: splitList(os.Getenv("DISCORD_SEARCH_CHANNELS")),
-		AdminUsers:            admins,
+		DiscordGuildIDs:        splitList(os.Getenv("DISCORD_GUILD_IDS")),
+		DriveServiceAccount:    os.Getenv("DRIVE_SERVICE_ACCOUNT"),
+		CalendarIDs:            splitList(os.Getenv("CALENDAR_IDS")),
+		CalendarServiceAccount: os.Getenv("CALENDAR_SERVICE_ACCOUNT"),
+		DiscordSearchChannels:  splitList(os.Getenv("DISCORD_SEARCH_CHANNELS")),
+		AdminUsers:             admins,
 	}
 	updateChecker := sourcecheck.New(
 		live, wikiAPI,

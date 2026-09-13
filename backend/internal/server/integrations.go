@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/97kuek/wasa-chat/backend/internal/calendar"
 	"github.com/97kuek/wasa-chat/backend/internal/pipeline"
 )
 
@@ -41,6 +42,7 @@ func (s *Server) handleIntegrations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, []Integration{
 		s.discordIntegration(r.Context()),
 		s.driveIntegration(),
+		s.calendarIntegration(r.Context()),
 	})
 }
 
@@ -98,5 +100,28 @@ func (s *Server) driveIntegration() Integration {
 	}
 	found.Connected = true
 	found.Summary = fmt.Sprintf("%d件の資料を取り込んでいます", pages)
+	return found
+}
+
+func (s *Server) calendarIntegration(ctx context.Context) Integration {
+	found := Integration{
+		ID:        pipeline.ToolCalendar,
+		Name:      "カレンダー",
+		ShareWith: s.cfg.CalendarServiceAccount,
+	}
+	if len(s.cfg.CalendarIDs) == 0 {
+		found.NextStep = "予定表をこのサービスアカウントへ「予定の表示」権限で共有し、" +
+			"CALENDAR_IDS にカレンダーIDを設定してください（docs/07 §5.7）。"
+		return found
+	}
+	events, err := calendar.Fetch(ctx, s.cfg.CalendarIDs)
+	if err != nil || len(events) == 0 {
+		found.NextStep = "設定はありますが予定を読めていません。共有設定とカレンダーIDを確かめてください。"
+		return found
+	}
+	found.Connected = true
+	found.Detail = calendar.CalendarNames(events)
+	found.Summary = fmt.Sprintf("%d件の予定を読めています（%d日前〜%d日後）",
+		len(events), calendar.PastDays, calendar.FutureDays)
 	return found
 }

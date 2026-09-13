@@ -19,7 +19,7 @@ export type AssistantOrigin = "wiki" | "site" | "fee";
  * 共有ドライブやDiscordも出る。同じ型に押し込むと、アシスタントの選択肢に
  * Discordが並ぶことになる（2026-09-13のCodex指摘）。
  */
-export type SourceOrigin = AssistantOrigin | "drive" | "discord";
+export type SourceOrigin = AssistantOrigin | "drive" | "discord" | "calendar";
 
 export type Source = {
   title: string;

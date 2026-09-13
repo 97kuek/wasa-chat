@@ -27,6 +27,17 @@ function ToolIcon({ id }: { id: string }) {
       </svg>
     );
   }
+  if (id === "calendar") {
+    // Googleカレンダーの四角と日付欄
+    return (
+      <svg className="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="4.5" width="18" height="16" rx="2.5" fill="#fff" stroke="#4285F4" strokeWidth="1.6" />
+        <path d="M3 9h18" stroke="#4285F4" strokeWidth="1.6" />
+        <path d="M8 3v3M16 3v3" stroke="#4285F4" strokeWidth="1.6" strokeLinecap="round" />
+        <rect x="10" y="12" width="4.5" height="4" rx="0.6" fill="#EA4335" />
+      </svg>
+    );
+  }
   if (id === "drive") {
     // Googleドライブの三角。3つの面を色で分ける
     return (
