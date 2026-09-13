@@ -148,25 +148,51 @@ func (s *Server) startDiscordAnswer(interaction *discord.Interaction) {
 		},
 	}
 
+	job := discordJob{
+		Command: command, Question: question, AssistantID: assistantID,
+		Token: token, UserID: userID, Username: username,
+		GuildID: target.guildID, ChannelID: channelID,
+		Scope: target.scope, Days: target.options.Days,
+	}
+	// ⚠️ **Cloud Tasks へ積めるなら積む。** Cloud Run は既定でリクエスト処理中
+	// しかCPUを割り当てないため、応答後の goroutine は実行が保証されない
+	// （docs/09 A-11）。積む呼び出しは元のリクエストの中で終わるので、
+	// 「考えています」を3秒以内に返すことと両立する
+	if s.enqueueDiscordJob(context.Background(), job) {
+		return
+	}
+	// キューが未設定・または積めなかったときは、いままでどおり goroutine で作る。
+	// **回答しないより、保証の無い経路でも回答したほうがよい**
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), discordAnswerTimeout)
 		defer cancel()
-
-		var reply discordReply
-		switch command {
-		case discord.CommandSummary:
-			reply = s.recapForDiscord(ctx, recap.KindSummary, target, userID, username)
-		case discord.CommandTodo:
-			reply = s.recapForDiscord(ctx, recap.KindTodo, target, userID, username)
-		default:
-			reply = s.answerForDiscord(ctx, question, assistantID, channelID, userID, username)
-		}
-		if reply.refusal != "" {
-			s.refuseDiscord(ctx, token, reply.refusal)
-			return
-		}
-		s.replyDiscord(ctx, token, reply.messages)
+		s.runDiscordJob(ctx, job)
 	}()
+}
+
+// runDiscordJob は回答を作り、「考えています」を書き換える。
+// goroutine から呼ばれる場合と、Cloud Tasks から呼ばれる場合がある。
+func (s *Server) runDiscordJob(ctx context.Context, job discordJob) {
+	target := recapTarget{
+		guildID:   job.GuildID,
+		channelID: job.ChannelID,
+		scope:     job.Scope,
+		options:   discord.Options{Days: job.Days},
+	}
+	var reply discordReply
+	switch job.Command {
+	case discord.CommandSummary:
+		reply = s.recapForDiscord(ctx, recap.KindSummary, target, job.UserID, job.Username)
+	case discord.CommandTodo:
+		reply = s.recapForDiscord(ctx, recap.KindTodo, target, job.UserID, job.Username)
+	default:
+		reply = s.answerForDiscord(ctx, job.Question, job.AssistantID, job.ChannelID, job.UserID, job.Username)
+	}
+	if reply.refusal != "" {
+		s.refuseDiscord(ctx, job.Token, reply.refusal)
+		return
+	}
+	s.replyDiscord(ctx, job.Token, reply.messages)
 }
 
 // discordReply は Discord へ返すもの。

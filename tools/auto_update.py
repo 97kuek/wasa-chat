@@ -349,6 +349,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="公開元の変更を取り込んで索引を差し替えます")
     parser.add_argument("--check-only", action="store_true", help="変更の有無だけ調べます")
     parser.add_argument("--force", action="store_true", help="変更が無くても作り直します")
+    # 取り出し方を変えたときは、その出所だけ取り直せば足りる。
+    # 全部取り直すと公式サイトの500ページで11分かかる（実測）
+    parser.add_argument("--only", default="",
+                        help="この出所だけ取り直します（カンマ区切り。例: drive）")
     args = parser.parse_args()
 
     load_dotenv()
@@ -361,6 +365,25 @@ def main() -> int:
     previous = published(location, "sources.json")
     snapshot = remote_snapshot()
     every = all_sources()
+    if only := {v.strip() for v in args.only.split(",") if v.strip()}:
+        if unknown := only - every:
+            raise SystemExit(f"知らない出所です: {sorted(unknown)}（使えるのは {sorted(every)}）")
+        print(f"指定された出所だけ取り直します: {sorted(only)}")
+        # ⚠️ **先に前回の取得結果を取り寄せる。** 索引は全出所そろって作るので、
+        # 指定した出所だけ取っても、ほかの生データが無ければ作れない
+        if missing := pull_dumps(location) & every:
+            print(f"前回の取得結果が無い出所も取り直します: {sorted(missing)}")
+            only |= missing
+        rebuild(only)
+        after = json.loads(INDEX.read_text(encoding="utf-8"))
+        if problems := safe_to_publish(current, after):
+            print("差し替えを中止します:", file=sys.stderr)
+            for problem in problems:
+                print(f"  - {problem}", file=sys.stderr)
+            return 1
+        # **基準は進めない。** 取り直しただけで公開元が変わったわけではない
+        publish(location)
+        return 0
     if current is None or previous is None:
         print("公開中の索引か取得一覧がありません。初回として全部取り直します。")
         changed = every

@@ -367,6 +367,8 @@ func main() {
 		CodeVersion:      env("APP_VERSION", "local"),
 		IndexPublishedAt: os.Getenv("INDEX_PUBLISHED_AT"),
 		LLMName:          client.Name(),
+		TasksQueue:       os.Getenv("TASKS_QUEUE"),
+		PublicURL:        os.Getenv("PUBLIC_URL"),
 		DiscordPublicKey: os.Getenv("DISCORD_PUBLIC_KEY"),
 		DiscordAppID:     os.Getenv("DISCORD_APP_ID"),
 		DiscordBotToken:  os.Getenv("DISCORD_BOT_TOKEN"),

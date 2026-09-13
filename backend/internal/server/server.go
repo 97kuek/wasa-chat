@@ -64,6 +64,11 @@ type Config struct {
 	// DiscordSearchChannels を設定すると、画面からの検索をそのチャンネルだけへ絞る。
 	// 未設定なら公開チャンネル全部（docs/09 A-12）
 	DiscordSearchChannels []string
+	// TasksQueue は Cloud Tasks のキュー（projects/…/locations/…/queues/…）。
+	// 未設定なら、回答は goroutine で作る（docs/09 A-11）
+	TasksQueue string
+	// PublicURL は自分自身のURL。Cloud Tasks から戻ってくる先に使う
+	PublicURL string
 	// Discordのスラッシュコマンド。公開鍵が未設定なら口ごと開かない
 	DiscordPublicKey string
 	DiscordAppID     string
@@ -133,6 +138,8 @@ func (s *Server) Routes() http.Handler {
 	// アプリまで届かず404になるため、予約されない /health を使う。
 	// Discordは署名で本人確認するので、Cookieの認証は通さない
 	mux.HandleFunc("POST /api/discord", s.handleDiscord)
+	// Cloud Tasks から戻ってくる口。Cookieではなく署名で本人確認する
+	mux.HandleFunc("POST /api/discord/work", s.handleDiscordWork)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		pages, chunks := s.live.Current().Stats()
 		status := s.live.Status()
