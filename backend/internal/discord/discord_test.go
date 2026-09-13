@@ -89,7 +89,7 @@ func TestFormatAnswerKeepsSources(t *testing.T) {
 		{Title: "荷重試験", URL: "https://wiki.example/load"},
 		{Title: "構造設計", URL: ""},
 	}
-	got := FormatAnswer("荷重試験の申請は？", "新宿で申請します。", sources)
+	got := strings.Join(FormatAnswer("荷重試験の申請は？", "新宿で申請します。", sources), "\n")
 
 	// 行頭の `- ` でDiscordが実際の箇条書きとして描画する。中点（・）はただの文字
 	for _, want := range []string{"> 荷重試験の申請は？", "新宿で申請します。", "**参照**",
@@ -100,25 +100,97 @@ func TestFormatAnswerKeepsSources(t *testing.T) {
 	}
 }
 
-// 2000字を超えるときは**本文を削り、出典は残す**。
+// **切り詰めずに続きを送る。** 出典URLは日本語タイトルのパーセントエンコードで
+// 最長214文字あり、4件付くと本文に440字しか残らなかった（2026-09-13に索引で確認）
+func TestFormatAnswerSplitsInsteadOfTruncating(t *testing.T) {
+	// 実データの最長級URLを4件。以前はここで本文が440字まで削られていた
+	sources := make([]Source, 4)
+	for i := range sources {
+		sources[i] = Source{
+			Title: "一般設計学の観点からみた主翼構造の設計手順",
+			URL:   "https://wasabirdman.sakura.ne.jp/wbwiki/w/index.php/" + strings.Repeat("%E8%A8%AD", 30),
+		}
+	}
+	body := strings.Repeat("主翼の設計手順をここに書く。", 200) // 2800字
+
+	messages := FormatAnswer("荷重試験の申請は？", body, sources)
+
+	if len(messages) < 2 {
+		t.Fatalf("1通に押し込んでいる: %d通", len(messages))
+	}
+	joined := strings.Join(messages, "")
+	if strings.Contains(joined, truncatedMark) {
+		t.Fatalf("収まるのに省略している:\n%s", joined[:200])
+	}
+	// 本文が最後まで残っていること
+	if count := strings.Count(joined, "主翼の設計手順をここに書く。"); count != 200 {
+		t.Fatalf("本文が欠けている: %d / 200", count)
+	}
+	if !strings.Contains(messages[len(messages)-1], "**参照**") {
+		t.Fatal("出典が最後の通に無い")
+	}
+}
+
+// それでも収まらないときは**本文を削り、出典は残す**。
 // 出典を落とすと、長い回答ほど根拠が分からなくなるという逆の挙動になる。
 func TestFormatAnswerTruncatesBodyNotSources(t *testing.T) {
 	sources := []Source{{Title: "長い資料", URL: "https://wiki.example/long"}}
-	got := FormatAnswer("質問", strings.Repeat("あ", 5000), sources)
+	messages := FormatAnswer("質問", strings.Repeat("あ", 20000), sources)
 
-	if length := len([]rune(got)); length > MessageLimit {
-		t.Fatalf("上限を超えている: %d文字", length)
+	if len(messages) != MaxMessagesPerAnswer {
+		t.Fatalf("通数が違う: %d通", len(messages))
 	}
-	if !strings.Contains(got, "[長い資料](https://wiki.example/long)") {
-		t.Fatalf("出典が落ちている:\n%s", got[len(got)-200:])
+	for i, message := range messages {
+		if length := Length(message); length > MessageLimit {
+			t.Fatalf("%d通目が上限を超えている: %d文字", i+1, length)
+		}
 	}
-	if !strings.Contains(got, "省略しました") {
+	last := messages[len(messages)-1]
+	if !strings.Contains(last, "[長い資料](https://wiki.example/long)") {
+		t.Fatalf("出典が落ちている:\n%s", last)
+	}
+	if !strings.Contains(last, "省略しました") {
 		t.Fatal("省略したことを伝えていない")
 	}
 }
 
+// ⚠️ **Discordは UTF-16 の符号単位で数える。** 絵文字は1文字で2単位になるので、
+// rune 数で見積もると境界ぎりぎりの回答が弾かれる
+func TestLengthCountsUTF16(t *testing.T) {
+	if got := Length("あいう"); got != 3 {
+		t.Fatalf("日本語の数え方が違う: %d", got)
+	}
+	if got := Length("🛩"); got != 2 {
+		t.Fatalf("BMP外の文字を1と数えている: %d", got)
+	}
+	// サロゲートペアの途中で切らない（切ると壊れた文字が残る）
+	if got := truncateTo("🛩🛩", 3); Length(got) != 2 || got != "🛩" {
+		t.Fatalf("サロゲートペアの途中で切った: %q", got)
+	}
+}
+
+// 分割は段落・行の切れ目で。文字数だけで切ると箇条書きの途中で割れる
+func TestSplitMessagesBreaksOnBoundary(t *testing.T) {
+	var lines []string
+	for i := 0; i < 400; i++ {
+		lines = append(lines, "- 主翼の設計手順をここに書く行です")
+	}
+	messages := splitMessages("", strings.Join(lines, "\n"), "", MessageLimit, MaxMessagesPerAnswer)
+
+	if len(messages) < 2 {
+		t.Fatalf("分割していない: %d通", len(messages))
+	}
+	for i, message := range messages {
+		for _, line := range strings.Split(strings.TrimSuffix(message, truncatedMark), "\n") {
+			if line != "" && !strings.HasPrefix(line, "- 主翼") {
+				t.Fatalf("%d通目が行の途中で割れている: %q", i+1, line)
+			}
+		}
+	}
+}
+
 func TestFormatAnswerWithoutSources(t *testing.T) {
-	got := FormatAnswer("質問", "資料に記載がありません。", nil)
+	got := strings.Join(FormatAnswer("質問", "資料に記載がありません。", nil), "\n")
 	if strings.Contains(got, "参照") {
 		t.Fatalf("出典が無いのに見出しを出している:\n%s", got)
 	}
@@ -190,9 +262,9 @@ func TestQuestionIgnoresNonString(t *testing.T) {
 // 画面では [1] が押せる出典マークになるが、Discordには押す先が無く、
 // ただの記号として残る。実際に使って「見にくすぎる」と指摘が出た（2026-09-13）
 func TestFormatAnswerStripsCitations(t *testing.T) {
-	got := FormatAnswer("荷重試験は？",
+	got := strings.Join(FormatAnswer("荷重試験は？",
 		"新宿で申請します。[1] 期限は前日までです。[2][3]\n- 担当は設計班[1]",
-		[]Source{{Title: "荷重試験", URL: "https://wiki.example/load"}})
+		[]Source{{Title: "荷重試験", URL: "https://wiki.example/load"}}), "\n")
 
 	if strings.Contains(got, "[1]") || strings.Contains(got, "[2][3]") {
 		t.Fatalf("資料番号が残っている:\n%s", got)
@@ -228,8 +300,8 @@ func TestStripCitationsTrimsTrailingSpace(t *testing.T) {
 // 「[ ]」という文字がそのまま出る。プロンプトでも禁じているが、
 // モデルは慣れた書き方へ戻りやすいのでここでも直す
 func TestFormatRecapFixesCheckboxes(t *testing.T) {
-	got := FormatRecap(RecapScope("このチャンネル", 7, 10, 2),
-		"- [ ] **部員A** / 翼型を決める / 8月まで\n  - [x] 下調べ\n* [ ] **部員B** / 発注")
+	got := strings.Join(FormatRecap(RecapScope("このチャンネル", 7, 10, 2),
+		"- [ ] **部員A** / 翼型を決める / 8月まで\n  - [x] 下調べ\n* [ ] **部員B** / 発注"), "\n")
 
 	if strings.Contains(got, "[ ]") || strings.Contains(got, "[x]") {
 		t.Fatalf("タスクリスト記法が残っている:\n%s", got)

@@ -194,7 +194,11 @@ func TestGatherNeedsBotToken(t *testing.T) {
 type discordStub struct {
 	pages    map[string][][]Message // チャンネルID → ページ（新しい順）
 	channels []Channel
+	threads  []map[string]any
 	requests int
+	// rateLimitOnce を立てると、最初の1回だけ429を返す
+	rateLimitOnce bool
+	limited       bool
 }
 
 func (d *discordStub) serve(t *testing.T) *httptest.Server {
@@ -204,8 +208,18 @@ func (d *discordStub) serve(t *testing.T) *httptest.Server {
 		d.requests++
 		_ = json.NewEncoder(w).Encode(d.channels)
 	})
+	mux.HandleFunc("/api/v10/guilds/{id}/threads/active", func(w http.ResponseWriter, _ *http.Request) {
+		d.requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{"threads": d.threads})
+	})
 	mux.HandleFunc("/api/v10/channels/{id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		d.requests++
+		if d.rateLimitOnce && !d.limited {
+			d.limited = true
+			w.Header().Set("Retry-After", "0.05")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		pages, ok := d.pages[r.PathValue("id")]
 		if !ok {
 			w.WriteHeader(http.StatusForbidden)
@@ -382,7 +396,7 @@ func TestGatherStopsAtRequestLimit(t *testing.T) {
 // **読んだ範囲を先頭に書く。** 会話ログを上流へ送る機能なので、
 // 何が送られたかがチャンネルに残る文言そのもので分かるようにする
 func TestFormatRecapStatesScope(t *testing.T) {
-	got := FormatRecap(RecapScope("このチャンネル", 7, 42, 3), "決まったこと\n- 日程は8月")
+	got := strings.Join(FormatRecap(RecapScope("このチャンネル", 7, 42, 3), "決まったこと\n- 日程は8月"), "\n")
 
 	for _, want := range []string{"このチャンネル", "過去7日", "42件", "3人", "引き継ぎ資料は参照していません"} {
 		if !strings.Contains(got, want) {
@@ -402,11 +416,99 @@ func TestRecapScopeNamesCrossChannel(t *testing.T) {
 }
 
 func TestFormatRecapFitsMessageLimit(t *testing.T) {
-	got := FormatRecap(RecapScope("このチャンネル", 7, 100, 9), strings.Repeat("あ", 5000))
-	if length := len([]rune(got)); length > MessageLimit {
-		t.Fatalf("上限を超えている: %d文字", length)
+	messages := FormatRecap(RecapScope("このチャンネル", 7, 100, 9), strings.Repeat("あ", 20000))
+	if len(messages) > MaxMessagesPerAnswer {
+		t.Fatalf("通数が多すぎる: %d通", len(messages))
 	}
-	if !strings.Contains(got, "省略しました") {
+	for i, message := range messages {
+		if length := Length(message); length > MessageLimit {
+			t.Fatalf("%d通目が上限を超えている: %d文字", i+1, length)
+		}
+	}
+	if !strings.Contains(messages[len(messages)-1], "省略しました") {
 		t.Fatal("省略したことを伝えていない")
+	}
+}
+
+// ⚠️ **`GET /guilds/{id}/channels` はスレッドを返さない。** 班ごとにスレッドで
+// 話していると、横断要約に1件も入らなかった（2026-09-13に指摘）
+func TestGatherIncludesActiveThreads(t *testing.T) {
+	stub := &discordStub{
+		channels: []Channel{
+			{ID: "c1", Type: channelTypeText, Name: "機体班", Position: 0},
+			{ID: "secret", Type: channelTypeText, Name: "幹部会", Position: 1,
+				PermissionOverwrit: denyEveryone("g1")},
+		},
+		threads: []map[string]any{
+			{"id": "t1", "type": channelTypePublicThread, "name": "翼型の相談", "parent_id": "c1"},
+			{"id": "t2", "type": channelTypePrivateThread, "name": "内輪", "parent_id": "c1"},
+			{"id": "t3", "type": channelTypePublicThread, "name": "人事", "parent_id": "secret"},
+		},
+		pages: map[string][][]Message{
+			"c1": {page("本体", 2, time.Minute)},
+			"t1": {page("スレ", 2, time.Minute)},
+			"t2": {page("内輪話", 2, time.Minute)},
+			"t3": {page("人事話", 2, time.Minute)},
+		},
+	}
+	stub.serve(t)
+	channelCacheMu.Lock()
+	channelCache = map[string]cachedChannels{}
+	channelCacheMu.Unlock()
+
+	got, err := Gather(t.Context(), "token", "g1", "c1", Options{Days: 7, AllChannels: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript := Transcript(got)
+
+	if !strings.Contains(transcript, "## #機体班 > 翼型の相談") {
+		t.Fatalf("公開スレッドを読んでいない:\n%s", transcript)
+	}
+	// **非公開スレッドは読まない。** 親が公開でも、中は選ばれた人だけの場所
+	if strings.Contains(transcript, "内輪話") {
+		t.Fatalf("非公開スレッドを読んでいる:\n%s", transcript)
+	}
+	// 親が非公開なら、そのスレッドも読まない
+	if strings.Contains(transcript, "人事話") {
+		t.Fatalf("非公開チャンネルのスレッドを読んでいる:\n%s", transcript)
+	}
+}
+
+// **Discordは待つべき秒数を教えてくれる。** 勝手な間隔で叩き直すと、
+// 次はもっと長く止められる
+func TestGatherRetriesAfterRateLimit(t *testing.T) {
+	stub := &discordStub{
+		rateLimitOnce: true,
+		pages:         map[string][][]Message{"c1": {page("本体", 2, time.Minute)}},
+	}
+	stub.serve(t)
+
+	got, err := Gather(t.Context(), "token", "", "c1", Options{Days: 7})
+	if err != nil {
+		t.Fatalf("429で諦めている: %v", err)
+	}
+	if CountMessages(got) != 2 {
+		t.Fatalf("再試行できていない: %d件", CountMessages(got))
+	}
+	if stub.requests < 2 {
+		t.Fatalf("再試行していない: %d回", stub.requests)
+	}
+}
+
+// 横断のとき、チャンネル一覧を2回取りに行かない（補完のキャッシュを使う）
+func TestGatherReusesChannelCache(t *testing.T) {
+	stub := choicesStub(t)
+	stub.pages = map[string][][]Message{"c1": {page("本体", 2, time.Minute)}}
+
+	ScopeChoices(t.Context(), "token", "g1", "") // 補完で一覧を取る
+	before := stub.requests
+
+	if _, err := Gather(t.Context(), "token", "g1", "c1", Options{Days: 7, AllChannels: true}); err != nil {
+		t.Fatal(err)
+	}
+	// 一覧の取り直しが起きていれば、スレッド取得(1)＋各チャンネルより多くなる
+	if stub.requests-before > 1+len(stub.channels) {
+		t.Fatalf("一覧を取り直している: %d回", stub.requests-before)
 	}
 }

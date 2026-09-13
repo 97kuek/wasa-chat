@@ -54,9 +54,6 @@ const (
 // AutocompleteLimit はDiscordが受け取る候補の最大件数。超えると弾かれる。
 const AutocompleteLimit = 25
 
-// MessageLimit は1メッセージの上限。超えると Discord 側で弾かれる。
-const MessageLimit = 2000
-
 // 登録するコマンド名。tools/register-discord-command.sh と揃えること。
 //
 // ⚠️ **サブコマンドにはしない。** Discordは「サブコマンドを持つコマンド」に
@@ -211,47 +208,6 @@ func Verify(publicKeyHex, signature, timestamp string, body []byte) bool {
 	return ed25519.Verify(ed25519.PublicKey(key), append([]byte(timestamp), body...), sig)
 }
 
-// Source は回答に添える出典。サーバーが索引から組み立てたものだけを渡す。
-type Source struct {
-	Title string
-	URL   string
-}
-
-// FormatAnswer は Discord へ出す本文を組み立てる。
-//
-// **出典は必ず添える。** 画面にはカードがあるが、Discordには無い。
-// 「どこを開けば確かめられるか」が無い回答は、引き継ぎ資料の道具として使えない。
-//
-// 2000字を超えるときは**本文を削り、出典は残す**。出典を落とすと、
-// 長い回答ほど根拠が分からなくなるという逆の挙動になる。
-func FormatAnswer(question, answer string, sources []Source) string {
-	answer = stripCitations(answer)
-	var tail strings.Builder
-	if len(sources) > 0 {
-		// 行頭の `- ` でDiscordが実際の箇条書きとして描画する。
-		// 中点（・）はただの文字で、字下げも点も付かない
-		tail.WriteString("\n\n**参照**\n")
-		for _, source := range sources {
-			if source.URL != "" {
-				fmt.Fprintf(&tail, "- [%s](%s)\n", source.Title, source.URL)
-			} else {
-				fmt.Fprintf(&tail, "- %s\n", source.Title)
-			}
-		}
-	}
-	head := fmt.Sprintf("> %s\n\n", strings.TrimSpace(question))
-	suffix := tail.String()
-
-	room := MessageLimit - len([]rune(head)) - len([]rune(suffix)) - len([]rune(truncatedMark))
-	body := strings.TrimSpace(answer)
-	if room > 0 && len([]rune(body)) > room {
-		body = string([]rune(body)[:room]) + truncatedMark
-	}
-	return head + body + suffix
-}
-
-const truncatedMark = "…（長いため省略しました）"
-
 // citationPattern は本文に付く資料番号 [1] や [1][3]。
 // `[見出し](URL)` を巻き込まないよう、直後が `(` のものは対象にしない。
 var citationPattern = regexp.MustCompile(`(\[\d+\])+(?:\()?`)
@@ -280,34 +236,13 @@ func stripCitations(answer string) string {
 	return strings.Join(lines, "\n")
 }
 
-// FormatRecap は要約・ToDoの本文を組み立てる。
-//
-// **読んだ範囲を先頭に書く。** 会話ログを上流へ送る機能なので、「何が送られたか」が
-// 後から誰にでも分かるようにしておく。チャンネルに残る文言そのものが説明になる
-// （docs/09 A-8）。出典は無い（根拠は会話ログそのもの）。
-func FormatRecap(scope, body string) string {
-	head := fmt.Sprintf("-# %s\n\n", scope)
-	text := strings.TrimSpace(fixCheckboxes(body))
-	room := MessageLimit - len([]rune(head)) - len([]rune(truncatedMark))
-	if room > 0 && len([]rune(text)) > room {
-		text = string([]rune(text)[:room]) + truncatedMark
-	}
-	return head + text
-}
-
-// RecapScope は読んだ範囲の説明文。
-//
-// **どこを何件読んだかを必ず書く。** 会話ログを上流へ送る機能なので、
-// チャンネルに残るこの1行が、そのまま「何が送られたか」の説明になる。
-func RecapScope(where string, days, messages, speakers int) string {
-	return fmt.Sprintf("%sの過去%d日ぶん・%d件の発言（%d人）を読みました。WASAの引き継ぎ資料は参照していません",
-		where, days, messages, speakers)
-}
-
 // オプション名。tools/register-discord-command.sh と揃えること。
 const (
 	OptionDays  = "期間"
 	OptionScope = "範囲"
+	// OptionAssistant は `/wasa` で口調・参照範囲を選ぶもの。
+	// 画面と同じアシスタントを、Discord向けの書き方の指定と重ねて使う
+	OptionAssistant = "アシスタント"
 	// ScopeAllChannels は「範囲」オプションでサーバー横断を選んだときの値
 	ScopeAllChannels = "all"
 )
@@ -333,6 +268,8 @@ func fixCheckboxes(body string) string {
 // FollowUp は「考えています」を書き換えるための中身。
 type FollowUp struct {
 	Content string `json:"content"`
+	// Flags に EphemeralFlag を立てると、本人だけに見える
+	Flags int `json:"flags,omitempty"`
 	// 誰かへの通知を発生させない。質問文に @everyone が入っていても波及させない
 	AllowedMentions struct {
 		Parse []string `json:"parse"`
@@ -345,10 +282,37 @@ func NewFollowUp(content string) FollowUp {
 	return follow
 }
 
-// FollowUpURL は最初の応答を書き換える先。トークンが認証を兼ねるので鍵は要らない。
+// EphemeralFlag は「本人だけに見える」メッセージの印。
+//
+// 追いかけて送るメッセージ（follow-up）は、最初の応答が公開でも
+// **本人だけに見える形にできる**。回数切れや操作ミスの知らせを
+// チャンネル全員に見せないために使う。
+const EphemeralFlag = 64
+
+// NewEphemeral は本人だけに見える知らせを作る。
+func NewEphemeral(content string) FollowUp {
+	follow := NewFollowUp(content)
+	follow.Flags = EphemeralFlag
+	return follow
+}
+
+// FollowUpURL は最初の応答（「考えています」）を書き換える先。
+// トークンが認証を兼ねるので鍵は要らない。
 func FollowUpURL(applicationID, token string) string {
-	return fmt.Sprintf("https://discord.com/api/v10/webhooks/%s/%s/messages/@original",
-		applicationID, token)
+	return fmt.Sprintf("%s/webhooks/%s/%s/messages/@original", apiBase, applicationID, token)
+}
+
+// ExtraMessageURL は2通目以降を投稿する先。回答が2000字に収まらないときに使う。
+func ExtraMessageURL(applicationID, token string) string {
+	return fmt.Sprintf("%s/webhooks/%s/%s", apiBase, applicationID, token)
+}
+
+// DeleteOriginalURL は「考えています」を消す先。
+//
+// **失敗を伝えるときに使う。** 置いたままにすると「考えています」が
+// チャンネルに残り続ける。消してから、本人だけに見える形で理由を出す。
+func DeleteOriginalURL(applicationID, token string) string {
+	return FollowUpURL(applicationID, token)
 }
 
 // Deferred は「考えています」の応答。

@@ -9,7 +9,7 @@
 #
 # 登録するのは3つ。
 #
-#   /wasa <質問>        引き継ぎ資料に質問する（索引を読む。出典が付く）
+#   /wasa <質問> [アシスタント]  引き継ぎ資料に質問する（索引を読む。出典が付く）
 #   /要約 [期間] [範囲]  最近の会話を要約する（索引を読まない）
 #   /todo [期間] [範囲]  最近の会話からToDoを抜き出す（同上）
 #
@@ -62,6 +62,13 @@ curl -fsS -X PUT "https://discord.com/api/v10/${scope}" \
           "name": "質問",
           "description": "例: 荷重試験の申請方法を教えてください",
           "required": true
+        },
+        {
+          "type": 3,
+          "name": "アシスタント",
+          "description": "口調と参照範囲を変えます。打つと候補が絞られます",
+          "required": false,
+          "autocomplete": true
         }
       ]
     },

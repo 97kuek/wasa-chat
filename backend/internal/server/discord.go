@@ -88,12 +88,42 @@ func (s *Server) handleDiscord(w http.ResponseWriter, r *http.Request) {
 // 1回だけで、しかも1分間は覚えている（discord.ScopeChoices）。
 func (s *Server) discordChoices(ctx context.Context, interaction *discord.Interaction) []byte {
 	name, typed := interaction.Focused()
-	if name != discord.OptionScope || s.cfg.DiscordBotToken == "" {
-		return discord.Autocomplete(nil)
-	}
 	ctx, cancel := context.WithTimeout(ctx, discordChoicesTimeout)
 	defer cancel()
-	return discord.Autocomplete(discord.ScopeChoices(ctx, s.cfg.DiscordBotToken, interaction.GuildID, typed))
+
+	switch name {
+	case discord.OptionScope:
+		if s.cfg.DiscordBotToken == "" {
+			return discord.Autocomplete(nil)
+		}
+		return discord.Autocomplete(discord.ScopeChoices(ctx, s.cfg.DiscordBotToken, interaction.GuildID, typed))
+	case discord.OptionAssistant:
+		return discord.Autocomplete(s.assistantChoices(ctx, typed))
+	default:
+		return discord.Autocomplete(nil)
+	}
+}
+
+// assistantChoices は `/wasa` のアシスタント候補。打つと絞られる。
+func (s *Server) assistantChoices(ctx context.Context, typed string) []discord.Choice {
+	assistants, err := s.state.ListAssistants(ctx)
+	if err != nil {
+		// 候補が出ないだけで、コマンド自体は打てる
+		log.Printf("アシスタントの候補を作れません: %v", err)
+		return nil
+	}
+	typed = strings.ToLower(strings.TrimSpace(typed))
+	choices := make([]discord.Choice, 0, discord.AutocompleteLimit)
+	for _, assistant := range assistants {
+		if len(choices) >= discord.AutocompleteLimit {
+			break
+		}
+		if typed != "" && !strings.Contains(strings.ToLower(assistant.Name), typed) {
+			continue
+		}
+		choices = append(choices, discord.Choice{Name: assistant.Name, Value: assistant.ID})
+	}
+	return choices
 }
 
 // startDiscordAnswer は回答を作って、最初の応答を書き換える。
@@ -107,6 +137,8 @@ func (s *Server) startDiscordAnswer(interaction *discord.Interaction) {
 	userID := interaction.UserID()
 	username := interaction.Username()
 	token := interaction.Token
+	channelID := interaction.ChannelID
+	assistantID := interaction.OptionText(discord.OptionAssistant)
 	target := recapTarget{
 		guildID:   interaction.GuildID,
 		channelID: interaction.ChannelID,
@@ -120,17 +152,34 @@ func (s *Server) startDiscordAnswer(interaction *discord.Interaction) {
 		ctx, cancel := context.WithTimeout(context.Background(), discordAnswerTimeout)
 		defer cancel()
 
-		var content string
+		var reply discordReply
 		switch command {
 		case discord.CommandSummary:
-			content = s.recapForDiscord(ctx, recap.KindSummary, target, userID, username)
+			reply = s.recapForDiscord(ctx, recap.KindSummary, target, userID, username)
 		case discord.CommandTodo:
-			content = s.recapForDiscord(ctx, recap.KindTodo, target, userID, username)
+			reply = s.recapForDiscord(ctx, recap.KindTodo, target, userID, username)
 		default:
-			content = s.answerForDiscord(ctx, question, userID, username)
+			reply = s.answerForDiscord(ctx, question, assistantID, channelID, userID, username)
 		}
-		s.replyDiscord(ctx, token, content)
+		if reply.refusal != "" {
+			s.refuseDiscord(ctx, token, reply.refusal)
+			return
+		}
+		s.replyDiscord(ctx, token, reply.messages)
 	}()
+}
+
+// discordReply は Discord へ返すもの。
+//
+// refusal は**本人だけに見える知らせ**（回数切れ・操作ミス・失敗）。
+// チャンネル全員に見せる必要が無いものを分けている。
+type discordReply struct {
+	messages []string
+	refusal  string
+}
+
+func refuse(format string, args ...any) discordReply {
+	return discordReply{refusal: fmt.Sprintf(format, args...)}
 }
 
 // discordStyle は Discord へ出すときの書き方の指定。
@@ -205,33 +254,66 @@ func discordLLMError(err error) string {
 //
 // 質問としてパイプラインへ流すと、会話の内容は索引に無いので「記載なし」と
 // 返ってしまう。**枠を使う前に気づかせる**（送信しないので回数も減らさない）。
-var recapRequestPattern = regexp.MustCompile(`(この|ここまでの|今までの)?(会話|やりとり|スレ)`)
+//
+// ⚠️ **指示語を必須にしている。** 以前は「会話」を含むだけで拾っていたため、
+// 「過去の会話ログはWikiにある？」のような**普通の質問まで案内に化けた**
+// （2026-09-13に指摘）。「この会話」「ここまでのやりとり」のように、
+// いま目の前のやりとりを指していると読める形だけを対象にする。
+var recapRequestPattern = regexp.MustCompile(`(この|ここまでの?|今までの|直近の)(会話|やりとり|スレッド|話)`)
 
-func (s *Server) answerForDiscord(ctx context.Context, question, userID, username string) string {
+// recapVerbs は「何をしてほしいか」。指示語と両方そろったときだけ案内する。
+var recapVerbs = map[string][]string{
+	"`/要約`":   {"要約", "まとめて", "まとめを"},
+	"`/todo`": {"ToDo", "todo", "TODO", "タスク", "やること"},
+}
+
+// recapRedirect は、会話そのものを扱う依頼なら案内先のコマンドを返す。
+//
+// **指示語と依頼の両方がそろったときだけ**案内する。片方だけで拾うと、
+// 「議事録のまとめ方は？」のような普通の質問まで案内に化ける。
+func recapRedirect(question string) string {
+	if !recapRequestPattern.MatchString(question) {
+		return ""
+	}
+	// map を回すと順序が毎回変わる。並びを固定して、同じ質問には同じ案内を返す
+	for _, command := range []string{"`/要約`", "`/todo`"} {
+		for _, verb := range recapVerbs[command] {
+			if strings.Contains(question, verb) {
+				return command
+			}
+		}
+	}
+	return ""
+}
+
+func (s *Server) answerForDiscord(ctx context.Context, question, assistantID, channelID, userID, username string) discordReply {
 	if question == "" {
-		return "質問を入力してください。"
+		return refuse("質問を入力してください。")
 	}
 	if len([]rune(question)) > maxQuestionRunes {
-		return fmt.Sprintf("質問は%d文字以内にしてください。", maxQuestionRunes)
+		return refuse("質問は%d文字以内にしてください。", maxQuestionRunes)
 	}
-	if recapRequestPattern.MatchString(question) {
-		if strings.Contains(question, "要約") || strings.Contains(question, "まとめ") {
-			return "会話の要約は `/要約` を使ってください。`/wasa` は引き継ぎ資料への質問用です。"
-		}
-		if strings.Contains(question, "ToDo") || strings.Contains(question, "todo") ||
-			strings.Contains(question, "タスク") || strings.Contains(question, "やること") {
-			return "会話からのToDo抽出は `/todo` を使ってください。`/wasa` は引き継ぎ資料への質問用です。"
-		}
+	if command := recapRedirect(question); command != "" {
+		return refuse("会話そのものを扱うときは %s を使ってください。`/wasa` は引き継ぎ資料への質問用です。", command)
+	}
+
+	assistant, err := s.discordAssistant(ctx, assistantID)
+	if err != nil {
+		return refuse("そのアシスタントは見つかりませんでした。")
 	}
 
 	refund, message := s.takeDiscordQuota(ctx, userID)
 	if refund == nil {
-		return message
+		return refuse("%s", message)
 	}
+
+	// **続けて聞けるようにする。** 同じチャンネルで同じ人が直前にした
+	// やりとりだけを渡す。画面の履歴とは別枠（docs/07 §5.5）
+	history := s.discordHistory(ctx, userID, channelID)
 
 	var answer strings.Builder
 	var sources []discord.Source
-	err := s.pipe.RunWithMode(ctx, question, nil, discordStyle, pipeline.ModeDeep, func(event pipeline.Event) {
+	err = s.pipe.RunWithMode(ctx, question, history, assistant, pipeline.ModeDeep, func(event pipeline.Event) {
 		switch event.Type {
 		case "delta":
 			answer.WriteString(event.Text)
@@ -247,9 +329,10 @@ func (s *Server) answerForDiscord(ctx context.Context, question, userID, usernam
 	if err != nil {
 		refund()
 		log.Printf("Discordの質問に失敗（%s）: %v", username, err)
-		return discordLLMError(err)
+		return refuse("%s", discordLLMError(err))
 	}
-	return discord.FormatAnswer(question, answer.String(), sources)
+	s.saveDiscordHistory(ctx, userID, channelID, question, answer.String())
+	return discordReply{messages: discord.FormatAnswer(question, answer.String(), sources)}
 }
 
 // recapTarget はどこを読むか。
@@ -291,16 +374,16 @@ func (t recapTarget) resolve(ctx context.Context, botToken string) (recapTarget,
 //
 // **索引を読まない。** 根拠は会話ログそのもので、出典も付かない。
 // なぜ回答パイプラインに載せないかは internal/recap のパッケージ説明を参照。
-func (s *Server) recapForDiscord(ctx context.Context, kind recap.Kind, target recapTarget, userID, username string) string {
+func (s *Server) recapForDiscord(ctx context.Context, kind recap.Kind, target recapTarget, userID, username string) discordReply {
 	if s.recap == nil || s.cfg.DiscordBotToken == "" {
-		return "この機能はまだ設定されていません（DISCORD_BOT_TOKENが未設定）。"
+		return refuse("この機能はまだ設定されていません（DISCORD_BOT_TOKENが未設定）。")
 	}
 	if target.channelID == "" {
-		return "チャンネルの中で実行してください。"
+		return refuse("チャンネルの中で実行してください。")
 	}
 	target, refusal := target.resolve(ctx, s.cfg.DiscordBotToken)
 	if refusal != "" {
-		return refusal
+		return refuse("%s", refusal)
 	}
 
 	// **先に会話ログを取る。** 読めないチャンネルだったときに枠を減らさない
@@ -308,29 +391,29 @@ func (s *Server) recapForDiscord(ctx context.Context, kind recap.Kind, target re
 	if err != nil {
 		switch {
 		case errors.Is(err, discord.ErrNoAccess):
-			return "このチャンネルの過去ログを読む権限がありません。WASA Chatに「メッセージ履歴を読む」権限を与えてください。"
+			return refuse("このチャンネルの過去ログを読む権限がありません。WASA Chatに「メッセージ履歴を読む」権限を与えてください。")
 		case errors.Is(err, discord.ErrNotInGuild):
-			return "チャンネル横断の要約は、サーバーの中で実行してください。"
+			return refuse("チャンネル横断の要約は、サーバーの中で実行してください。")
 		case errors.Is(err, discord.ErrNoPublicChannels):
-			return "読める公開チャンネルがありませんでした。WASA Chatに「メッセージ履歴を読む」権限を与えてください。"
+			return refuse("読める公開チャンネルがありませんでした。WASA Chatに「メッセージ履歴を読む」権限を与えてください。")
 		}
 		log.Printf("Discordの過去ログ取得に失敗（%s）: %v", username, err)
-		return "過去ログを読み取れませんでした。"
+		return refuse("過去ログを読み取れませんでした。")
 	}
 	transcript := discord.Transcript(logs)
 	if strings.TrimSpace(transcript) == "" {
-		return "読み取れる発言がありませんでした。期間を広げてお試しください。"
+		return refuse("読み取れる発言がありませんでした。期間を広げてお試しください。")
 	}
 
 	refund, message := s.takeDiscordQuota(ctx, userID)
 	if refund == nil {
-		return message
+		return refuse("%s", message)
 	}
 	body, err := s.recap.Run(ctx, kind, transcript)
 	if err != nil {
 		refund()
 		log.Printf("Discordの%s生成に失敗（%s）: %v", kind, username, err)
-		return discordLLMError(err)
+		return refuse("%s", discordLLMError(err))
 	}
 	where := target.label
 	if target.options.AllChannels {
@@ -338,36 +421,178 @@ func (s *Server) recapForDiscord(ctx context.Context, kind recap.Kind, target re
 	}
 	scope := discord.RecapScope(where, target.options.Days,
 		discord.CountMessages(logs), discord.CountSpeakers(logs))
-	return discord.FormatRecap(scope, body)
+	return discordReply{messages: discord.FormatRecap(scope, body)}
 }
 
 // replyDiscord は「考えています」を実際の回答へ書き換える。
-func (s *Server) replyDiscord(ctx context.Context, token, content string) {
-	payload, err := json.Marshal(discord.NewFollowUp(content))
-	if err != nil {
-		log.Printf("Discordへの返信を組み立てられません: %v", err)
+//
+// **回答は複数通になり得る。** 1通目は最初の応答を書き換え、続きは追加の
+// メッセージとして投稿する。出典URLは日本語タイトルのパーセントエンコードで
+// 最長214文字あり、切り詰めると長い回答が毎回途中で切れていた（2026-09-13）。
+func (s *Server) replyDiscord(ctx context.Context, token string, messages []string) {
+	if len(messages) == 0 {
 		return
 	}
 	url := discord.FollowUpURL(s.cfg.DiscordAppID, token)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(payload))
-	if err != nil {
-		log.Printf("Discordへの返信を作れません: %v", err)
+	if err := s.sendDiscord(ctx, http.MethodPatch, url, discord.NewFollowUp(messages[0])); err != nil {
+		log.Printf("Discordへ返信できません: %v", err)
 		return
+	}
+	extra := discord.ExtraMessageURL(s.cfg.DiscordAppID, token)
+	for _, message := range messages[1:] {
+		if err := s.sendDiscord(ctx, http.MethodPost, extra, discord.NewFollowUp(message)); err != nil {
+			// 続きが出せなくても、1通目は既に出ている。そこで止める
+			log.Printf("Discordへ続きを出せません: %v", err)
+			return
+		}
+	}
+}
+
+// refuseDiscord は失敗や操作ミスを**本人だけに見える形**で伝える。
+//
+// 「本日の回数を使い切りました」をチャンネル全員に見せる必要は無い。
+// 「考えています」を消してから、本人向けの知らせを出す。
+func (s *Server) refuseDiscord(ctx context.Context, token, reason string) {
+	url := discord.DeleteOriginalURL(s.cfg.DiscordAppID, token)
+	if err := s.sendDiscord(ctx, http.MethodDelete, url, nil); err != nil {
+		// 消せなければ、そのまま書き換えて伝える（黙って終わらせない）
+		log.Printf("Discordの「考えています」を消せません: %v", err)
+		s.replyDiscord(ctx, token, []string{reason})
+		return
+	}
+	extra := discord.ExtraMessageURL(s.cfg.DiscordAppID, token)
+	if err := s.sendDiscord(ctx, http.MethodPost, extra, discord.NewEphemeral(reason)); err != nil {
+		log.Printf("Discordへ知らせを出せません: %v", err)
+	}
+}
+
+func (s *Server) sendDiscord(ctx context.Context, method, url string, payload any) error {
+	var reader io.Reader
+	if payload != nil {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	if err != nil {
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("Discordへ返信できません: %v", err)
-		return
+		return err
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		log.Printf("Discordが返信を受け付けません（%d）: %s", res.StatusCode, detail)
+		return fmt.Errorf("Discordが受け付けません（%d）: %s", res.StatusCode, detail)
 	}
+	return nil
 }
 
 func writeRaw(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(body)
+}
+
+// discordAssistant は `/wasa` の「アシスタント」オプションを解決する。
+//
+// 指定が無ければ discordStyle（Discord向けの書き方の指定だけを持つもの）。
+// 指定があれば、その口調・参照範囲の上に**Discord向けの書き方を重ねる**。
+// 画面と同じアシスタントをそのまま使うと、表やMermaidを書いてきて崩れる。
+func (s *Server) discordAssistant(ctx context.Context, id string) (*state.Assistant, error) {
+	if id == "" {
+		return discordStyle, nil
+	}
+	assistants, err := s.state.ListAssistants(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, assistant := range assistants {
+		if assistant.ID != id {
+			continue
+		}
+		merged := assistant
+		merged.Instruction = strings.TrimSpace(assistant.Instruction) + "\n\n" + discordStyle.Instruction
+		return &merged, nil
+	}
+	return nil, errAssistantNotFound
+}
+
+var errAssistantNotFound = errors.New("アシスタントが見つかりません")
+
+// discordChatID は会話の続きを入れておく場所。
+//
+// **チャンネルごと・利用者ごと**に分ける。同じチャンネルでも別の人の質問が
+// 混ざると文脈がおかしくなるし、同じ人でも別チャンネルなら別の話をしている。
+func discordChatID(channelID string) string { return "discord:" + channelID }
+
+// discordHistoryTurns は回答へ渡す直前のやりとりの数。
+//
+// **少なくてよい。** 履歴は毎回プロンプトへ載るので、多いほど資料に使える
+// 文脈が減る。画面と違ってDiscordには履歴の画面が無く、続けて聞くのは
+// たいてい直前の1〜2往復である。
+const discordHistoryTurns = 3
+
+// discordHistory は同じチャンネル・同じ利用者の直前のやりとりを返す。
+func (s *Server) discordHistory(ctx context.Context, userID, channelID string) []pipeline.ConversationTurn {
+	chats, err := s.state.ListChats(ctx, s.userKey("discord:"+userID), maxChats)
+	if err != nil {
+		// 続きが効かないだけで、質問そのものは答えられる
+		log.Printf("Discordの履歴を読めません: %v", err)
+		return nil
+	}
+	id := discordChatID(channelID)
+	for _, chat := range chats {
+		if chat.ID != id {
+			continue
+		}
+		turns := chat.Turns
+		if len(turns) > discordHistoryTurns {
+			turns = turns[len(turns)-discordHistoryTurns:]
+		}
+		history := make([]pipeline.ConversationTurn, 0, len(turns))
+		for _, turn := range turns {
+			if turn.Question == "" || turn.Answer == "" {
+				continue
+			}
+			history = append(history, pipeline.ConversationTurn{Question: turn.Question, Answer: turn.Answer})
+		}
+		return history
+	}
+	return nil
+}
+
+// saveDiscordHistory は次の質問へ渡すために、今回のやりとりを覚えておく。
+//
+// **画面の履歴とは別枠にする。** 同じ人でもDiscordと画面では文脈が違い、
+// 混ぜると画面のチャット一覧にDiscordのやりとりが並んでしまう。
+func (s *Server) saveDiscordHistory(ctx context.Context, userID, channelID, question, answer string) {
+	if channelID == "" || strings.TrimSpace(answer) == "" {
+		return
+	}
+	userKey := s.userKey("discord:" + userID)
+	id := discordChatID(channelID)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	chat := state.Chat{ID: id, Title: "Discord", CreatedAt: now}
+	if chats, err := s.state.ListChats(ctx, userKey, maxChats); err == nil {
+		for _, found := range chats {
+			if found.ID == id {
+				chat = found
+				break
+			}
+		}
+	}
+	chat.UpdatedAt = now
+	chat.Turns = append(chat.Turns, state.Turn{Question: question, Answer: answer, Status: "done"})
+	// **際限なく伸ばさない。** 履歴はFirestoreの1ドキュメント1MBに収める必要がある
+	if len(chat.Turns) > discordHistoryTurns {
+		chat.Turns = chat.Turns[len(chat.Turns)-discordHistoryTurns:]
+	}
+	if err := s.state.SaveChat(ctx, userKey, state.NormalizeChat(chat), maxChats); err != nil {
+		log.Printf("Discordの履歴を保存できません: %v", err)
+	}
 }

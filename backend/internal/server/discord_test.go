@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,16 +118,20 @@ func TestAnswerForDiscordRedirectsRecapRequests(t *testing.T) {
 	srv := &Server{cfg: Config{DailyLimit: 30}, state: state.NewMemory()}
 
 	cases := []struct{ question, want string }{
-		{"この会話を要約して", "/要約"},
-		{"ここまでのやりとりをまとめて", "/要約"},
-		{"この会話からToDoを作って", "/todo"},
-		{"この会話からタスクを抜き出して", "/todo"},
+		{"この会話を要約して", "`/要約`"},
+		{"ここまでのやりとりをまとめて", "`/要約`"},
+		{"この会話からToDoを作って", "`/todo`"},
+		{"この会話からタスクを抜き出して", "`/todo`"},
 	}
 	for _, c := range cases {
 		t.Run(c.question, func(t *testing.T) {
-			got := srv.answerForDiscord(t.Context(), c.question, "u1", "部員A")
-			if !strings.Contains(got, c.want) {
-				t.Fatalf("%s へ案内していない: %s", c.want, got)
+			if got := recapRedirect(c.question); got != c.want {
+				t.Fatalf("%s へ案内していない: %q", c.want, got)
+			}
+			// 案内は**本人だけに見える**。チャンネル全員に出す必要が無い
+			reply := srv.answerForDiscord(t.Context(), c.question, "", "c1", "u1", "部員A")
+			if len(reply.messages) != 0 || !strings.Contains(reply.refusal, c.want) {
+				t.Fatalf("公開で出している: %+v", reply)
 			}
 		})
 	}
@@ -143,8 +148,8 @@ func TestRecapForDiscordNeedsBotToken(t *testing.T) {
 	srv := &Server{cfg: Config{DailyLimit: 30}, state: state.NewMemory()}
 	got := srv.recapForDiscord(t.Context(), recap.KindSummary,
 		recapTarget{guildID: "g1", channelID: "c1"}, "u1", "部員A")
-	if !strings.Contains(got, "DISCORD_BOT_TOKEN") {
-		t.Fatalf("設定不足を伝えていない: %s", got)
+	if !strings.Contains(got.refusal, "DISCORD_BOT_TOKEN") {
+		t.Fatalf("設定不足を伝えていない: %+v", got)
 	}
 }
 
@@ -192,5 +197,86 @@ func TestDiscordChoicesOnlyForScope(t *testing.T) {
 	}
 	if got := string(srv.discordChoices(t.Context(), &interaction)); !strings.Contains(got, `"choices":[]`) {
 		t.Fatalf("期間に候補を返している: %s", got)
+	}
+}
+
+// ⚠️ **指示語を必須にしている。**「会話」を含むだけで拾っていたため、
+// 普通の質問まで案内に化けていた（2026-09-13に指摘）
+func TestAnswerForDiscordDoesNotHijackNormalQuestions(t *testing.T) {
+	for _, question := range []string{
+		"過去の会話ログの要約はWikiのどこにある？",
+		"議事録のまとめ方のルールを教えて",
+		"タスク管理はどうしている？",
+		"スレッド強度の計算方法は？",
+	} {
+		t.Run(question, func(t *testing.T) {
+			if got := recapRedirect(question); got != "" {
+				t.Fatalf("普通の質問を %s へ案内した", got)
+			}
+		})
+	}
+}
+
+// 履歴はチャンネルごと・利用者ごと。混ざると文脈がおかしくなる
+func TestDiscordHistoryIsPerChannel(t *testing.T) {
+	srv := &Server{cfg: Config{SessionSecret: "テスト用の固定鍵テスト用の固定鍵"}, state: state.NewMemory()}
+
+	srv.saveDiscordHistory(t.Context(), "u1", "c1", "荷重試験は？", "新宿で申請します。")
+	srv.saveDiscordHistory(t.Context(), "u1", "c2", "翼型は？", "NACA4412です。")
+
+	got := srv.discordHistory(t.Context(), "u1", "c1")
+	if len(got) != 1 || got[0].Question != "荷重試験は？" {
+		t.Fatalf("チャンネルが混ざっている: %+v", got)
+	}
+	if other := srv.discordHistory(t.Context(), "u2", "c1"); len(other) != 0 {
+		t.Fatalf("別の利用者の履歴が漏れている: %+v", other)
+	}
+}
+
+// **際限なく伸ばさない。** 履歴は毎回プロンプトへ載る
+func TestDiscordHistoryKeepsRecentTurns(t *testing.T) {
+	srv := &Server{cfg: Config{SessionSecret: "テスト用の固定鍵テスト用の固定鍵"}, state: state.NewMemory()}
+	for i := 0; i < 10; i++ {
+		srv.saveDiscordHistory(t.Context(), "u1", "c1", fmt.Sprintf("質問%d", i), fmt.Sprintf("回答%d", i))
+	}
+	got := srv.discordHistory(t.Context(), "u1", "c1")
+	if len(got) != discordHistoryTurns {
+		t.Fatalf("履歴の数が違う: %d", len(got))
+	}
+	if got[len(got)-1].Question != "質問9" {
+		t.Fatalf("直前のやりとりが残っていない: %+v", got)
+	}
+}
+
+// アシスタントを指定すると、その指示に**Discord向けの書き方を重ねる**。
+// 画面と同じものをそのまま使うと、表やMermaidを書いてきて崩れる
+func TestDiscordAssistantMergesStyle(t *testing.T) {
+	shared := state.NewMemory()
+	srv := &Server{state: shared}
+	if err := shared.CreateAssistant(t.Context(), state.Assistant{
+		ID: "senpai", Name: "先輩", Instruction: "敬語は使わず、後輩に教える口調で答える。",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 指定なしは Discord 向けの指定だけ
+	got, err := srv.discordAssistant(t.Context(), "")
+	if err != nil || got != discordStyle {
+		t.Fatalf("既定が discordStyle でない: %+v %v", got, err)
+	}
+
+	got, err = srv.discordAssistant(t.Context(), "senpai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Instruction, "後輩に教える口調") {
+		t.Fatalf("アシスタントの指示が消えている:\n%s", got.Instruction)
+	}
+	if !strings.Contains(got.Instruction, "表は使わない") {
+		t.Fatalf("Discord向けの書き方が重なっていない:\n%s", got.Instruction)
+	}
+
+	if _, err := srv.discordAssistant(t.Context(), "そんなIDは無い"); err == nil {
+		t.Fatal("存在しないアシスタントを通した")
 	}
 }

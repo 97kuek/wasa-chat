@@ -158,20 +158,41 @@ type fetcher struct {
 	last     time.Time
 }
 
+// maxRetryWait はDiscordが「これだけ待て」と言ってきたときに、実際に待つ上限。
+// これより長い指示は素直に諦める（15分のトークンを使い切るより、読めた範囲で答える）。
+const maxRetryWait = 10 * time.Second
+
 func (f *fetcher) get(ctx context.Context, url string, out any) error {
-	if f.requests >= MaxRequests {
-		return errTooManyRequests
-	}
-	if wait := requestInterval - time.Since(f.last); wait > 0 {
+	// **429で待つのは1回だけ。** 待ち続けると回答そのものが返せなくなる
+	for attempt := 0; attempt < 2; attempt++ {
+		wait, err := f.try(ctx, url, out)
+		if err != nil || wait == 0 {
+			return err
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(wait):
 		}
 	}
+	return errRateLimited
+}
+
+// try は1回だけ問い合わせる。待って再試行すべきときは、待つ時間を返す。
+func (f *fetcher) try(ctx context.Context, url string, out any) (time.Duration, error) {
+	if f.requests >= MaxRequests {
+		return 0, errTooManyRequests
+	}
+	if wait := requestInterval - time.Since(f.last); wait > 0 {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Authorization", "Bot "+f.token)
 	f.requests++
@@ -179,17 +200,33 @@ func (f *fetcher) get(ctx context.Context, url string, out any) error {
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer res.Body.Close()
-	if res.StatusCode == http.StatusForbidden || res.StatusCode == http.StatusNotFound {
-		return ErrNoAccess
-	}
-	if res.StatusCode >= 300 {
+	switch {
+	case res.StatusCode == http.StatusTooManyRequests:
+		// **Discordは待つべき秒数を教えてくれる。** 勝手な間隔で叩き直すと、
+		// 次はもっと長く止められる
+		return retryAfter(res), nil
+	case res.StatusCode == http.StatusForbidden, res.StatusCode == http.StatusNotFound:
+		return 0, ErrNoAccess
+	case res.StatusCode >= 300:
 		detail, _ := io.ReadAll(io.LimitReader(res.Body, 256))
-		return fmt.Errorf("Discordが応答しません（%d）: %s", res.StatusCode, detail)
+		return 0, fmt.Errorf("Discordが応答しません（%d）: %s", res.StatusCode, detail)
 	}
-	return json.NewDecoder(res.Body).Decode(out)
+	return 0, json.NewDecoder(res.Body).Decode(out)
+}
+
+// retryAfter は Retry-After ヘッダ（秒）を読む。読めなければ既定の間隔にする。
+func retryAfter(res *http.Response) time.Duration {
+	seconds, err := strconv.ParseFloat(res.Header.Get("Retry-After"), 64)
+	if err != nil || seconds <= 0 {
+		return time.Second
+	}
+	if wait := time.Duration(seconds * float64(time.Second)); wait <= maxRetryWait {
+		return wait
+	}
+	return maxRetryWait
 }
 
 // Gather は要約の対象になる発言を集める。
@@ -212,11 +249,12 @@ func Gather(ctx context.Context, botToken, guildID, channelID string, opts Optio
 		if guildID == "" {
 			return nil, ErrNotInGuild
 		}
-		found, err := publicChannels(ctx, f, guildID)
-		if err != nil {
-			return nil, err
+		// 補完で作った一覧をそのまま使う。**同じ一覧を2回取りに行かない**
+		found := cachedPublicChannels(ctx, botToken, guildID)
+		if len(found) == 0 {
+			return nil, ErrNoPublicChannels
 		}
-		targets = found
+		targets = append(found, activeThreads(ctx, f, guildID, found)...)
 	}
 
 	// 横断のときは**発言数の枠をチャンネルで分け合う**。1つのにぎやかな
@@ -253,6 +291,60 @@ func Gather(ctx context.Context, botToken, guildID, channelID string, opts Optio
 		logs = append(logs, ChannelLog{Channel: target.Name, Messages: messages})
 	}
 	return logs, nil
+}
+
+// スレッドの種類。公開スレッドだけを読む（非公開スレッドは親が公開でも読まない）。
+const (
+	channelTypeAnnouncementThread = 10
+	channelTypePublicThread       = 11
+	channelTypePrivateThread      = 12
+)
+
+// activeThreads は、公開チャンネルにぶら下がる**動いているスレッド**を返す。
+//
+// ⚠️ **`GET /guilds/{id}/channels` はスレッドを返さない。** 班ごとにスレッドで
+// 話していると、横断要約に1件も入らなかった（2026-09-13に指摘）。
+//
+// **止まった（archived）スレッドは読まない。** 全部辿るとチャンネル数ぶんの
+// 追加リクエストが要る割に、古い話しか出てこない。
+//
+// スレッド名は「#親チャンネル > スレッド名」にする。どこの話か分からない
+// 見出しが並ぶと、横断要約が読めなくなる。
+func activeThreads(ctx context.Context, f *fetcher, guildID string, public []Channel) []Channel {
+	var payload struct {
+		Threads []struct {
+			Channel
+			ParentID string `json:"parent_id"`
+		} `json:"threads"`
+	}
+	url := fmt.Sprintf("%s/guilds/%s/threads/active", apiBase, guildID)
+	if err := f.get(ctx, url, &payload); err != nil {
+		// スレッドが読めなくても、チャンネル本体は読める
+		return nil
+	}
+	parents := make(map[string]string, len(public))
+	for _, channel := range public {
+		parents[channel.ID] = channel.Name
+	}
+
+	threads := make([]Channel, 0, len(payload.Threads))
+	for _, thread := range payload.Threads {
+		// **非公開スレッドは読まない。** 親が公開でも、中は選ばれた人だけの場所
+		if thread.Type != channelTypePublicThread && thread.Type != channelTypeAnnouncementThread {
+			continue
+		}
+		parent, ok := parents[thread.ParentID]
+		if !ok {
+			// 親が非公開チャンネルなら、そのスレッドも読まない
+			continue
+		}
+		threads = append(threads, Channel{
+			ID:   thread.ID,
+			Type: thread.Type,
+			Name: parent + " > " + thread.Name,
+		})
+	}
+	return threads
 }
 
 func publicChannels(ctx context.Context, f *fetcher, guildID string) ([]Channel, error) {
@@ -404,6 +496,9 @@ var (
 	ErrNotInGuild = fmt.Errorf("サーバーの中で実行してください")
 	// ErrNoPublicChannels は読める公開チャンネルが1つも無いことを表す。
 	ErrNoPublicChannels = fmt.Errorf("読める公開チャンネルがありません")
+
+	// errRateLimited は待って再試行しても上限に当たり続けたことを表す。
+	errRateLimited = fmt.Errorf("Discordのレート制限に当たりました")
 
 	// errTooManyRequests は1回のコマンドのリクエスト上限に達したことを表す。
 	// 利用者へは出さない（読めたところまでで答える）。
