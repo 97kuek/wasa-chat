@@ -1951,7 +1951,10 @@ select:focus-visible {
 .tool-popover {
   position: absolute;
   bottom: calc(100% + 8px);
-  left: 0;
+  /* ⚠️ **右端を基準にして、左へ開く。** 「+」は入力欄の右寄りにあるので、
+     左端を基準にすると幅ぶん右へ伸びて画面の外へ出る。狭い画面では
+     左へも出てしまうため、下の media query で左右とも留める */
+  right: 0;
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -2270,7 +2273,28 @@ select:focus-visible {
   .feedback-trigger span { display: none; }
   .feedback-trigger { width: 34px; justify-content: center; padding-inline: 0; }
   .header-menu-wrap { position: static; }
-  .header-popover { top: calc(100% + 8px); right: 12px; }
+  /* ⚠️ **スマホでは左右の両端を留める。** 片側だけ留めて幅を持たせると、
+     押した位置によっては画面の外へはみ出し、お知らせの本文が切れる
+     （2026-09-13にiPhoneで指摘）。両端を留めれば幅は画面が決める。
+     **縦も止める。** お知らせは増え続けるので、止めないと下が読めなくなる */
+  .header-popover {
+    top: calc(100% + 8px);
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: calc(100dvh - 140px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* 「+」は入力欄の右寄りにあるので、そこから右へ360px開くと画面外へ出る。
+     入力欄の帯（.composer-area）を基準にして、左右の端を留める */
+  .tool-menu { position: static; }
+  .tool-popover {
+    left: var(--chat-gutter);
+    right: var(--chat-gutter);
+    width: auto;
+  }
   .feedback-popover {
     position: fixed;
     top: 68px;

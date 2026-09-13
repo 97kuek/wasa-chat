@@ -132,6 +132,29 @@ test("項目が増えても一覧が上へせり上がらない", () => {
   assert.match(styles, /\.tool-popover > ul \{[\s\S]*?overflow-y: auto;/);
 });
 
+test("スマホでは、開いた一覧が画面からはみ出さない", () => {
+  // ⚠️ 「+」は入力欄の右寄り、お知らせは見出しの右端にある。片側だけ留めて
+  // 幅を持たせると、そこから右へ開いて**本文が切れる**（2026-09-13にiPhoneで指摘）。
+  // 左右の両端を留めれば、幅は画面が決める
+  // 広い画面でも、左端を基準にすると幅ぶん右へ伸びてはみ出す。右端から左へ開く。
+  // ⚠️ 規則の中だけを見る（[^}]）。[\s\S]*? だと `}` を越えて別の規則を拾う
+  assert.match(styles, /\.tool-popover \{[^}]*right: 0;/);
+  assert.doesNotMatch(styles, /\.tool-popover \{[^}]*left: 0;/);
+
+  const narrow = styles.slice(styles.indexOf("@media (max-width: 560px)"));
+  assert.match(narrow, /\.tool-popover \{[^}]*left: var\(--chat-gutter\);[^}]*right: var\(--chat-gutter\);/);
+  assert.match(narrow, /\.header-popover \{[^}]*right: 12px;[^}]*left: 12px;/);
+  // お知らせは増え続けるので、縦も止めないと下が読めなくなる
+  assert.match(narrow, /\.header-popover \{[^}]*overflow-y: auto;/);
+});
+
+test("GoogleドライブとカレンダーのSVGを目分量で書かない", () => {
+  // ⚠️ 比率が合わないと、20px で出したときに別のサービスに見える（2026-09-13の指摘）
+  assert.match(menu, /viewBox="0 0 87\.3 78"/); // 公式ロゴの座標系
+  // カレンダーは日付を書く。色の塊だけだと何の印か伝わらない
+  assert.match(menu, /<text[\s\S]*?31[\s\S]*?<\/text>/);
+});
+
 test("説明は2行までに収める", () => {
   // 3行4行と折り返すと、その項目だけ背が高くなって一覧全体が伸びる
   assert.match(styles, /\.tool-item-note \{[\s\S]*?-webkit-line-clamp: 2;/);

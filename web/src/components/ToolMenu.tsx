@@ -28,25 +28,34 @@ function ToolIcon({ id }: { id: string }) {
     );
   }
   if (id === "calendar") {
-    // Googleカレンダーの四角と日付欄
+    // Googleカレンダーの日めくり。**日付を書く。**
+    // 以前は赤い四角を置いていたが、ただの色の塊にしか見えなかった
     return (
       <svg className="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="3" y="4.5" width="18" height="16" rx="2.5" fill="#fff" stroke="#4285F4" strokeWidth="1.6" />
-        <path d="M3 9h18" stroke="#4285F4" strokeWidth="1.6" />
-        <path d="M8 3v3M16 3v3" stroke="#4285F4" strokeWidth="1.6" strokeLinecap="round" />
-        <rect x="10" y="12" width="4.5" height="4" rx="0.6" fill="#EA4335" />
+        <rect x="3.5" y="4.5" width="17" height="16" rx="2.5" fill="#fff" stroke="#4285F4" strokeWidth="1.6" />
+        <path d="M3.5 9.5h17" stroke="#4285F4" strokeWidth="1.6" />
+        <path d="M8 3v3M16 3v3" stroke="#4285F4" strokeWidth="1.8" strokeLinecap="round" />
+        <text
+          x="12" y="17.8" textAnchor="middle" fill="#4285F4"
+          fontSize="7.5" fontWeight="700" fontFamily="Helvetica, Arial, sans-serif"
+        >
+          31
+        </text>
       </svg>
     );
   }
   if (id === "drive") {
-    // Googleドライブの三角。3つの面を色で分ける
+    // ⚠️ **公式ロゴの形をそのまま使う。** 以前は24×24へ目分量で書いた三角で、
+    // 面の向きも色の並びも実物と違っていた（2026-09-13にスマホで指摘）。
+    // 比率が合わないと、小さく出したときに別のサービスに見える
     return (
-      <svg className="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path fill="#0066DA" d="M2 18.2 4.3 22h9.2l-2.3-3.8H2Z" />
-        <path fill="#00AC47" d="m8.9 2-4.6 8 2.3 3.9L11.2 6 8.9 2Z" />
-        <path fill="#EA4335" d="M15.1 2H8.9l6.9 12h6.2L15.1 2Z" />
-        <path fill="#FFBA00" d="M22 14h-6.2l-2.3 4h6.2L22 14Z" />
-        <path fill="#00832D" d="M2 18.2h9.2L15.8 10 11.2 2 2 18.2Z" opacity=".0" />
+      <svg className="tool-icon" viewBox="0 0 87.3 78" aria-hidden="true">
+        <path fill="#0066da" d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" />
+        <path fill="#00ac47" d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0-1.2 4.5h27.5z" />
+        <path fill="#ea4335" d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" />
+        <path fill="#00832d" d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" />
+        <path fill="#2684fc" d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" />
+        <path fill="#ffba00" d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" />
       </svg>
     );
   }
