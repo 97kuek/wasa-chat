@@ -134,7 +134,7 @@ func TestSearchOrdersChannelsStably(t *testing.T) {
 
 	allowed := []Channel{{ID: "c1", Name: "機体班"}, {ID: "c2", Name: "電装班"}}
 	for i := 0; i < 3; i++ {
-		got, err := Search(t.Context(), "token", "g1", "翼", allowed)
+		got, err := Search(t.Context(), "token", "g1", "翼型の話", allowed)
 		if err != nil {
 			t.Fatal(err)
 		}

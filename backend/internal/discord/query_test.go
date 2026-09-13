@@ -16,6 +16,8 @@ func TestSearchQueryPicksOneSpecificTerm(t *testing.T) {
 		{"荷重試験の申請方法を教えてください", "荷重試験"},
 		{"TR797の諸元は？", "TR797"},
 		{"テストフライトの配車はどうする", "テストフライト"},
+		// 数字だけの塊は単独では当たりすぎる。「40」ではなく「代表」を選ぶ
+		{"40代の代表は誰ですか", "代表"},
 	}
 	for _, c := range cases {
 		t.Run(c.question, func(t *testing.T) {
@@ -30,6 +32,18 @@ func TestSearchQueryPicksOneSpecificTerm(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// 1文字は当たりすぎるので普通は使わないが、「桁」のような部材名もある。
+// 他に候補が無ければ使う
+func TestSearchQueryFallsBackToSingleRune(t *testing.T) {
+	if got := SearchQuery("桁は？"); got != "桁" {
+		t.Fatalf("1文字の部材名を落とした: %q", got)
+	}
+	// ほかに長い候補があればそちらを使う
+	if got := SearchQuery("桁の設計は？"); got != "設計" {
+		t.Fatalf("長いほうを選んでいない: %q", got)
 	}
 }
 

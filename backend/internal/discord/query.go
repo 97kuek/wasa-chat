@@ -8,6 +8,17 @@ import (
 // minTermRunes はこれ未満の塊を語として使わない。1文字は当たりすぎる。
 const minTermRunes = 2
 
+// verbStems は、送り仮名の前に立つ1文字の動詞。
+//
+// 「書かれていますか」は「書」＋ひらがなに割れるので、1文字の候補として
+// 残ってしまう。**これは探す語ではない。** 「桁」「翼」のような1文字の部材名と
+// 区別するために、動詞のほうを名前で挙げる（品詞を判定する仕組みは入れない）。
+var verbStems = map[string]bool{
+	"書": true, "教": true, "知": true, "見": true, "使": true, "作": true,
+	"決": true, "言": true, "思": true, "出": true, "入": true, "来": true,
+	"行": true, "分": true, "聞": true, "読": true, "持": true, "取": true,
+}
+
 // 質問の骨組みを作る語。**これ自体は探す対象ではない。**
 // 「どんな内容が書かれていますか」を検索しても何も当たらない。
 var queryStopWords = map[string]bool{
@@ -39,14 +50,28 @@ var queryStopWords = map[string]bool{
 // 助数詞や一般語になりやすい。形態素解析は入れない（辞書と依存が増えるわりに、
 // ここで要るのは助詞と疑問文の型を落とす程度）。**足りなければ測ってから足す。**
 func SearchQuery(question string) string {
-	best := ""
+	best, fallback := "", ""
 	for _, chunk := range splitQuestion(question) {
-		if len([]rune(chunk)) < minTermRunes || queryStopWords[strings.ToLower(chunk)] {
+		if queryStopWords[strings.ToLower(chunk)] {
+			continue
+		}
+		// 数字だけの塊（「40代」の 40、年号）は単独では当たりすぎる。
+		// 「40代の代表は？」で "40" ではなく "代表" を選びたい
+		if len([]rune(chunk)) < minTermRunes || allDigits(chunk) {
+			// 1文字は当たりすぎるので普通は使わない。ただし「桁」「翼」のように
+			// **1文字の部材名**もあるため、他に候補が無ければ使う。
+			// 動詞の語幹（「書」かれて、「教」えて）はここで落とす
+			if fallback == "" && !verbStems[chunk] {
+				fallback = chunk
+			}
 			continue
 		}
 		if len([]rune(chunk)) > len([]rune(best)) {
 			best = chunk
 		}
+	}
+	if best == "" {
+		return fallback
 	}
 	return best
 }
@@ -56,6 +81,16 @@ func SearchQuery(question string) string {
 // 日本語は空白で区切られないので、**ひらがなの連なりを境目として使う**。
 // 「翼型の設計はどこ」→「翼型」「の」「設計」「はどこ」のように割れ、
 // ひらがなだけの塊を捨てれば名詞が残る。助詞を辞書で持つより壊れにくい。
+// allDigits は数字だけの塊かを返す。
+func allDigits(chunk string) bool {
+	for _, r := range chunk {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return chunk != ""
+}
+
 func splitQuestion(question string) []string {
 	var chunks []string
 	var current strings.Builder
