@@ -166,9 +166,10 @@ func (s *Server) searchDiscordFor(ctx context.Context, question, previous, guild
 	if s.cfg.DiscordBotToken == "" {
 		return "", "", nil
 	}
-	// **前の質問も見る。**「最近のは？」だけでは何を探すか決まらない
-	term := discord.SearchQueryFor(question, previous)
-	if term == "" {
+	// **前の質問も見る。**「最近のは？」だけでは何を探すか決まらない。
+	// 語は複数返る（1つのクエリにまとめるとAND条件で当たらなくなる）
+	terms := discord.SearchTermsFor(question, previous)
+	if len(terms) == 0 {
 		return "", "", nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, discordSearchTimeout)
@@ -186,7 +187,7 @@ func (s *Server) searchDiscordFor(ctx context.Context, question, previous, guild
 		if len(allowed) == 0 {
 			continue
 		}
-		found, err := discord.Search(ctx, s.cfg.DiscordBotToken, guild.ID, term, allowed)
+		found, err := discord.Search(ctx, s.cfg.DiscordBotToken, guild.ID, terms, allowed)
 		if err != nil {
 			// **黙って続ける。** 1つのサーバーが読めなくても、ほかは読める。
 			// 会話が拾えないことは、質問に答えられないことを意味しない
@@ -212,7 +213,7 @@ func (s *Server) searchDiscordFor(ctx context.Context, question, previous, guild
 	if strings.TrimSpace(transcript) == "" {
 		return "", "", nil
 	}
-	note = discord.SearchScopeAcross(term, servers, len(logs), discord.CountMessages(logs))
+	note = discord.SearchScopeAcross(terms, servers, len(logs), discord.CountMessages(logs))
 	return transcript, note, sources
 }
 

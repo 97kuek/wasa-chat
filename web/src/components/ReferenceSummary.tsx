@@ -22,7 +22,6 @@ export function ReferenceSummary({ sources, active = false }: Props) {
 
   return (
     <p className={`answer-reference${active ? " is-active" : ""}`} aria-live={active ? "polite" : undefined}>
-      <span className="citation-mark" aria-hidden="true" />
       <span>
         <strong>{active ? "参照中" : "参照"}</strong>：
         {items.map((item, index) => (

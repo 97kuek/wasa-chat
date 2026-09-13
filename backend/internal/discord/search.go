@@ -19,7 +19,10 @@ const SearchContextRadius = 5
 
 // MaxSearchHits は前後を取りに行くヒットの数。
 // ヒットごとに1リクエスト増えるので、ここで止める。
-const MaxSearchHits = 5
+//
+// 5件だと「Discordを見ている感じがしない」という指摘が出たため12件へ広げた
+// （2026-09-13）。前後5件ずつ付くので、最大で12×11＝132件の発言が材料になる。
+const MaxSearchHits = 12
 
 // Search はサーバー内のメッセージを検索する。
 //
@@ -34,7 +37,7 @@ const MaxSearchHits = 5
 // 「ボットが見える範囲」で認可されるので、そのまま使うと**ボットが入っている
 // 非公開チャンネルまで画面から読めてしまう**。画面の利用者はWikiアカウントで、
 // Discordの権限とは無関係である（docs/09 A-12）。
-func Search(ctx context.Context, botToken, guildID, term string, allowed []Channel) ([]ChannelLog, error) {
+func Search(ctx context.Context, botToken, guildID string, terms []string, allowed []Channel) ([]ChannelLog, error) {
 	if botToken == "" {
 		return nil, ErrNoBotToken
 	}
@@ -44,26 +47,50 @@ func Search(ctx context.Context, botToken, guildID, term string, allowed []Chann
 	if len(allowed) == 0 {
 		return nil, ErrNoPublicChannels
 	}
-	names := make(map[string]string, len(allowed))
-	// ⚠️ **質問文をそのまま渡さない**（呼び出し側が SearchQueryFor で語にする）。
-	// 語が取れない質問（「教えてください」だけ等）は、投げても0件なので検索しない
-	term = strings.TrimSpace(term)
-	if term == "" {
+	if len(terms) == 0 {
+		// 語が取れない質問（「教えてください」だけ等）は投げても0件
 		return nil, nil
 	}
-	values := url.Values{}
-	values.Set("content", term)
+	names := make(map[string]string, len(allowed))
 	for _, channel := range allowed {
 		names[channel.ID] = channel.Name
-		// **チャンネルを明示して検索する。** 省略すると、ボットが見える
-		// 非公開チャンネルまで対象になる
+	}
+
+	f := &fetcher{token: botToken}
+	var hits []Message
+	seen := map[string]bool{}
+	// ⚠️ **語ごとに別のクエリを投げる。** 1つにまとめるとAND条件になり、
+	// 「荷重試験 申請」で21件が1件になる（docs/08 M64）
+	for _, term := range terms {
+		found, err := searchOnce(ctx, f, guildID, term, allowed)
+		if err != nil {
+			continue // 1語が失敗してもほかの語は探せる
+		}
+		for _, hit := range found {
+			if seen[hit.ID] {
+				continue
+			}
+			seen[hit.ID] = true
+			hits = append(hits, hit)
+		}
+	}
+	return withContext(ctx, f, hits, names)
+}
+
+// searchOnce は1語ぶんの検索。
+//
+// ⚠️ **チャンネルを明示して投げる。** 省略すると、ボットが見える非公開
+// チャンネルまで対象になる（画面の利用者はDiscordのメンバーとは限らない）。
+func searchOnce(ctx context.Context, f *fetcher, guildID, term string, allowed []Channel) ([]Message, error) {
+	values := url.Values{}
+	values.Set("content", strings.TrimSpace(term))
+	for _, channel := range allowed {
 		values.Add("channel_id", channel.ID)
 	}
 	values.Set("limit", fmt.Sprint(SearchLimit))
 	values.Set("sort_by", "timestamp")
 	values.Set("sort_order", "desc")
 
-	f := &fetcher{token: botToken}
 	var payload struct {
 		// 検索結果は「ヒットとその前後」の組で返る
 		Messages [][]Message `json:"messages"`
@@ -72,14 +99,13 @@ func Search(ctx context.Context, botToken, guildID, term string, allowed []Chann
 	if err := f.get(ctx, target, &payload); err != nil {
 		return nil, err
 	}
-
 	hits := make([]Message, 0, len(payload.Messages))
 	for _, group := range payload.Messages {
 		if hit, ok := pickHit(group); ok {
 			hits = append(hits, hit)
 		}
 	}
-	return withContext(ctx, f, hits, names)
+	return hits, nil
 }
 
 // pickHit は検索結果の1組から、実際に一致した1件を取り出す。
@@ -162,7 +188,7 @@ func ChannelURL(guildID, channelID string) string {
 }
 
 // SearchScope は画面へ出す「何を読んだか」の説明。
-func SearchScope(term string, channels, messages int) string {
+func SearchScope(terms []string, channels, messages int) string {
 	return fmt.Sprintf("Discordの公開チャンネル%d件から「%s」を検索し、前後を含む%d件の発言を読みました",
-		channels, strings.TrimSpace(term), messages)
+		channels, strings.Join(terms, "」「"), messages)
 }

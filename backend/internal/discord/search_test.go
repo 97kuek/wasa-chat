@@ -21,7 +21,7 @@ func TestSearchNamesChannelsExplicitly(t *testing.T) {
 	}
 	stub.serve(t)
 
-	got, err := Search(t.Context(), "token", "g1", "翼型",
+	got, err := Search(t.Context(), "token", "g1", []string{"翼型"},
 		[]Channel{{ID: "c1", Name: "機体班"}, {ID: "c2", Name: "電装班"}})
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestSearchFetchesContextAroundHit(t *testing.T) {
 	}
 	stub.serve(t)
 
-	got, err := Search(t.Context(), "token", "g1", "翼型", []Channel{{ID: "c1", Name: "機体班"}})
+	got, err := Search(t.Context(), "token", "g1", []string{"翼型"}, []Channel{{ID: "c1", Name: "機体班"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestSearchDropsHitsOutsideAllowed(t *testing.T) {
 	}
 	stub.serve(t)
 
-	got, err := Search(t.Context(), "token", "g1", "極秘", []Channel{{ID: "c1", Name: "機体班"}})
+	got, err := Search(t.Context(), "token", "g1", []string{"極秘"}, []Channel{{ID: "c1", Name: "機体班"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,19 +77,19 @@ func TestSearchDropsHitsOutsideAllowed(t *testing.T) {
 }
 
 func TestSearchNeedsGuildAndChannels(t *testing.T) {
-	if _, err := Search(t.Context(), "token", "", "翼型", []Channel{{ID: "c1"}}); err != ErrNotInGuild {
+	if _, err := Search(t.Context(), "token", "", []string{"翼型"}, []Channel{{ID: "c1"}}); err != ErrNotInGuild {
 		t.Fatalf("サーバー指定なしを通した: %v", err)
 	}
-	if _, err := Search(t.Context(), "token", "g1", "翼型", nil); err != ErrNoPublicChannels {
+	if _, err := Search(t.Context(), "token", "g1", []string{"翼型"}, nil); err != ErrNoPublicChannels {
 		t.Fatalf("チャンネル指定なしを通した: %v", err)
 	}
-	if _, err := Search(t.Context(), "", "g1", "翼型", []Channel{{ID: "c1"}}); err != ErrNoBotToken {
+	if _, err := Search(t.Context(), "", "g1", []string{"翼型"}, []Channel{{ID: "c1"}}); err != ErrNoBotToken {
 		t.Fatalf("トークンなしを通した: %v", err)
 	}
 }
 
 func TestSearchScope(t *testing.T) {
-	got := SearchScope("翼型", 2, 14)
+	got := SearchScope([]string{"翼型"}, 2, 14)
 	for _, want := range []string{"公開チャンネル2件", "翼型", "14件"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("%q が無い: %s", want, got)
@@ -134,7 +134,7 @@ func TestSearchOrdersChannelsStably(t *testing.T) {
 
 	allowed := []Channel{{ID: "c1", Name: "機体班"}, {ID: "c2", Name: "電装班"}}
 	for i := 0; i < 3; i++ {
-		got, err := Search(t.Context(), "token", "g1", "翼型の話", allowed)
+		got, err := Search(t.Context(), "token", "g1", []string{"翼型"}, allowed)
 		if err != nil {
 			t.Fatal(err)
 		}

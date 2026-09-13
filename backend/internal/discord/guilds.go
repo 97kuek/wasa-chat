@@ -84,7 +84,7 @@ func GuildLabel(guilds []Guild, id string) string {
 }
 
 // SearchScopeAcross は複数サーバーを検索したときの説明。
-func SearchScopeAcross(term string, servers []string, channels, messages int) string {
+func SearchScopeAcross(terms []string, servers []string, channels, messages int) string {
 	where := strings.Join(servers, "・")
 	if len(servers) == 0 {
 		where = "Discord"
@@ -92,7 +92,7 @@ func SearchScopeAcross(term string, servers []string, channels, messages int) st
 	// **探した語をそのまま出す。** 質問と違う語で探していることがあるので
 	// （「最近のは？」→前の質問の語）、何で探したのかが分からないと結果を読めない
 	return fmt.Sprintf("%s の公開チャンネル%d件から「%s」を検索し、前後を含む%d件の発言を読みました",
-		where, channels, strings.TrimSpace(term), messages)
+		where, channels, strings.Join(terms, "」「"), messages)
 }
 
 // SetAPIBaseForTest は宛先を差し替える。**テストからしか呼ばない。**

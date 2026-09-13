@@ -88,3 +88,53 @@ func TestSearchQueryForFollowUp(t *testing.T) {
 		t.Fatalf("自分の語を捨てている: %q", got)
 	}
 }
+
+// ⚠️ **1つのクエリに語を並べない（AND条件で当たらなくなる）。**
+// 代わりにクエリを分けて束ねる。1語だけだと拾える範囲が狭く、
+// 「Discordを見ている感じがしない」という指摘が出た（2026-09-13）
+func TestSearchTermsForReturnsSeveral(t *testing.T) {
+	got := SearchTermsFor("荷重試験の申請方法を教えてください", "")
+	if len(got) < 2 {
+		t.Fatalf("語が1つしか返っていない: %v", got)
+	}
+	// 特徴的な順（長い順）
+	if got[0] != "荷重試験" {
+		t.Fatalf("いちばん特徴的な語が先頭でない: %v", got)
+	}
+	if len(got) > MaxQueries {
+		t.Fatalf("クエリが多すぎる: %v", got)
+	}
+}
+
+// 短い追加質問では、前の質問の語を**先頭に**置く（そちらが本題）
+func TestSearchTermsForFollowUpLeadsWithPrevious(t *testing.T) {
+	got := SearchTermsFor("最近のは？", "荷重試験の過去の計画書ってある？")
+	if len(got) == 0 || got[0] != "荷重試験" {
+		t.Fatalf("前の質問の語が先頭でない: %v", got)
+	}
+	// 長い質問では前の質問を見ない（話題の変更を引きずらない）
+	fresh := SearchTermsFor("プロペラの製作手順を詳しく教えてください", "荷重試験の計画書は？")
+	for _, term := range fresh {
+		if term == "荷重試験" {
+			t.Fatalf("話題の変更を引きずっている: %v", fresh)
+		}
+	}
+}
+
+// 同じ語を2回投げない（リクエストの無駄）
+func TestSearchTermsForDeduplicates(t *testing.T) {
+	got := SearchTermsFor("翼型は？", "翼型の設計について")
+	seen := map[string]bool{}
+	for _, term := range got {
+		if seen[term] {
+			t.Fatalf("同じ語が2回入っている: %v", got)
+		}
+		seen[term] = true
+	}
+}
+
+func TestSearchTermsForEmpty(t *testing.T) {
+	if got := SearchTermsFor("教えて", ""); len(got) != 0 {
+		t.Fatalf("語が無いのに返している: %v", got)
+	}
+}
