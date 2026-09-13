@@ -216,18 +216,47 @@ def report_deterministic_pages(questions: list[dict], pipeline: Pipeline) -> Non
     print("  候補上限: 2件（LLM選択用に最低2枠を残す）")
 
 
+# ⚠️ **既定で読まない出所は、既定の測定から外す。**
+#
+# 共有ドライブは入力欄の「+」でオンにしたときだけ参照範囲へ入る（docs/07 §5.6）。
+# 全チャンクを混ぜて測ると、**本番では起きない条件**を測ることになり、そこへ
+# 合わせた改善は的を外す。実際、Driveを混ぜるとBM25のHit@5が51.5%→42.4%へ
+# 下がって見えるが、これは既定の利用では起きない（2026-09-13に実測、M67）。
+#
+# オンにしたときの精度も知りたいので、両方を出す。
+OPTIONAL_ORIGINS = ("drive",)
+
+
+def corpus(index: dict, include_optional: bool) -> dict:
+    pages = index["pages"]
+    if not include_optional:
+        pages = [p for p in pages if p.get("source", "wiki") not in OPTIONAL_ORIGINS]
+    return {
+        "chunks": {c["id"]: c["text"] for p in pages for c in p["chunks"]},
+        "chunk_page": {c["id"]: p["title"] for p in pages for c in p["chunks"]},
+    }
+
+
 def main() -> None:
     index = json.loads(INDEX.read_text(encoding="utf-8"))
     questions = json.loads(GOLDEN.read_text(encoding="utf-8"))["questions"]
 
-    chunks = {c["id"]: c["text"] for p in index["pages"] for c in p["chunks"]}
-    chunk_page = {c["id"]: p["title"] for p in index["pages"] for c in p["chunks"]}
-    print(f"チャンク {len(chunks)} 件 / 設問 {len(questions)} 問を読み込み")
+    base = corpus(index, include_optional=False)
+    chunks, chunk_page = base["chunks"], base["chunk_page"]
+    print(f"チャンク {len(chunks)} 件 / 設問 {len(questions)} 問を読み込み"
+          f"（既定の参照範囲。「+」で足す出所は除く）")
 
     bm25 = BM25(chunks)
     report("ベースライン: BM25（文字bigram）", score(questions, bm25.search, chunk_page))
 
     report_deterministic_pages(questions, Pipeline(INDEX, TOC, None))
+
+    # 「+」で足したときにどうなるかも測る。**既定の数字と混ぜないこと。**
+    wide = corpus(index, include_optional=True)
+    if len(wide["chunks"]) != len(chunks):
+        wide_bm25 = BM25(wide["chunks"])
+        report(f"参考: 「+」で全部オンにしたとき（{len(wide['chunks'])}チャンク）",
+               score(questions, wide_bm25.search, wide["chunk_page"]))
 
     # 下限の目安。これを明確に上回らない検索器は、検索していないのと同じ
     order = list(chunks)

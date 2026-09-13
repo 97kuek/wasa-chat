@@ -64,6 +64,22 @@ const (
 	CommandAsk     = "wasa"
 	CommandSummary = "要約"
 	CommandTodo    = "todo"
+	// メッセージを右クリック →「アプリ」から呼ぶもの。
+	//
+	// ⚠️ **リアクションでは作れない。** リアクション（MESSAGE_REACTION_ADD）は
+	// Gateway（WebSocketの常時接続）でしか届かず、常時接続は無料枠の約7%しか
+	// カバーできない（このパッケージの説明を参照）。右クリックのメッセージ
+	// コマンドは**HTTPで届く**ので、ゼロスケールのまま同じことができる。
+	CommandAskAbout    = "資料に聞く"
+	CommandSummarizeAt = "ここまでを要約"
+)
+
+// コマンドの種類。Discordの Application Command Type と対応する。
+const (
+	// CommandTypeChat は `/wasa` のように打つもの
+	CommandTypeChat = 1
+	// CommandTypeMessage はメッセージを右クリックして選ぶもの
+	CommandTypeMessage = 3
 )
 
 // CommandName は呼ばれたコマンドの名前を返す。
@@ -76,7 +92,15 @@ type Interaction struct {
 	Token string `json:"token"`
 	Data  struct {
 		Name    string   `json:"name"`
+		Type    int      `json:"type"`
 		Options []Option `json:"options"`
+		// TargetID は右クリックしたメッセージのID
+		TargetID string `json:"target_id"`
+		// Resolved には、そのメッセージの中身がそのまま入って届く。
+		// **履歴を取りに行かなくてよい**（権限も要らない）
+		Resolved struct {
+			Messages map[string]Message `json:"messages"`
+		} `json:"resolved"`
 	} `json:"data"`
 	// サーバー内では member、DMでは user に入る
 	Member struct {
@@ -143,6 +167,15 @@ func (o Option) number() (int, bool) {
 		return 0, false
 	}
 	return value, true
+}
+
+// TargetMessage は右クリックされたメッセージを返す。
+//
+// **中身は通知にそのまま入って届く。** 履歴を取りに行く必要も、
+// そのための権限も要らない。
+func (i *Interaction) TargetMessage() (Message, bool) {
+	message, ok := i.Data.Resolved.Messages[i.Data.TargetID]
+	return message, ok
 }
 
 // Question は最初の文字列オプションを返す。

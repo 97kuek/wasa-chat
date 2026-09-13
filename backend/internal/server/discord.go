@@ -148,6 +148,20 @@ func (s *Server) startDiscordAnswer(interaction *discord.Interaction) {
 		},
 	}
 
+	// メッセージを右クリックしたときは、その発言の中身が通知に入って届く。
+	// **履歴を取りに行かなくてよい**（権限も要らない）
+	if target, ok := interaction.TargetMessage(); ok {
+		switch command {
+		case discord.CommandAskAbout:
+			// その発言をそのまま質問として扱う
+			question = strings.TrimSpace(target.Content)
+			command = discord.CommandAsk
+		case discord.CommandSummarizeAt:
+			// その発言までの流れを要約する。範囲は既定の日数
+			command = discord.CommandSummary
+		}
+	}
+
 	job := discordJob{
 		Command: command, Question: question, AssistantID: assistantID,
 		Token: token, UserID: userID, Username: username,

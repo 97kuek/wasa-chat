@@ -280,3 +280,36 @@ func TestDiscordAssistantMergesStyle(t *testing.T) {
 		t.Fatal("存在しないアシスタントを通した")
 	}
 }
+
+// ⚠️ **リアクションでは作れない。** リアクションはGatewayでしか届かず、
+// 常時接続は無料枠の約7%しかカバーできない。右クリックのメッセージコマンドは
+// HTTPで届くので、ゼロスケールのまま同じことができる（2026-09-13）
+func TestMessageCommandUsesTheClickedMessage(t *testing.T) {
+	var interaction discord.Interaction
+	if err := json.Unmarshal([]byte(`{
+		"type": 2,
+		"data": {
+			"name": "資料に聞く", "type": 3, "target_id": "m1",
+			"resolved": {"messages": {"m1": {"id": "m1", "content": "  荷重試験の申請ってどこ？  "}}}
+		}
+	}`), &interaction); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := interaction.TargetMessage()
+	if !ok || got.Content != "  荷重試験の申請ってどこ？  " {
+		t.Fatalf("右クリックしたメッセージを取れない: %+v", got)
+	}
+	// **中身は通知に入って届く。** 履歴を取りに行く必要が無い
+	if interaction.Data.Type != discord.CommandTypeMessage {
+		t.Fatalf("メッセージコマンドとして扱えていない: %d", interaction.Data.Type)
+	}
+}
+
+// 右クリックでないコマンドでは、対象のメッセージは無い
+func TestSlashCommandHasNoTargetMessage(t *testing.T) {
+	var interaction discord.Interaction
+	interaction.Data.Name = discord.CommandAsk
+	if _, ok := interaction.TargetMessage(); ok {
+		t.Fatal("対象のメッセージがあることになっている")
+	}
+}

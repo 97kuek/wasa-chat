@@ -266,25 +266,63 @@ def from_bytes(mime: str, data: bytes) -> str:
 
 
 def pdf_text(data: bytes) -> str:
-    """画像だけのPDFは空になる（OCRはしない）。"""
+    """画像だけのPDFは空になる（OCRはしない）。
+
+    ⚠️ **ページ番号を見出しとして出す。** PDFには構造が残っていないので、
+    見出しを作らないと長い資料が1チャンクのままになり、節選択の手がかりが
+    ファイル名だけになる。ページ番号でも「この資料の何ページ目か」は示せる。
+    """
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
-    return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+    parts = []
+    for number, page in enumerate(reader.pages, 1):
+        text = (page.extract_text() or "").strip()
+        if text:
+            parts.append(f"== {number}ページ ==\n{text}")
+    return "\n\n".join(parts)
 
 
 def docx_text(data: bytes) -> str:
-    """段落と表の中身を拾う。**表を落とすと諸元表が消える。**"""
+    """段落と表の中身を拾う。**表を落とすと諸元表が消える。**
+
+    ⚠️ **見出しは `== 見出し ==` の形で出す。** build_index.py はこの形を節の
+    区切りとして読み、パンくず（ページ名 > 見出し）を作る。節選択はパンくずだけを
+    見て選ぶので、見出しが無いと**ファイル名しか手がかりが無くなる**。
+    実際、共有ドライブの62%が1チャンクのままだった（2026-09-13に実測）。
+    """
     import docx
 
     document = docx.Document(io.BytesIO(data))
-    parts = [p.text for p in document.paragraphs]
+    parts = []
+    for paragraph in document.paragraphs:
+        text = paragraph.text.strip()
+        if not text:
+            continue
+        if level := heading_level(paragraph.style.name):
+            parts.append(f"\n{'=' * level} {text} {'=' * level}\n")
+        else:
+            parts.append(text)
     for table in document.tables:
         for row in table.rows:
             cells = [c.text.strip() for c in row.cells]
             if any(cells):
                 parts.append(" | ".join(cells))
     return "\n".join(parts)
+
+
+def heading_level(style: str) -> int:
+    """Wordの見出しスタイルを `==` の数へ直す。見出しでなければ 0。
+
+    レベルは2〜4に収める。`=` が1つだとページ全体の題になり、
+    5つ以上は build_index.py の見出し判定（2〜6）から外れる。
+    """
+    name = (style or "").lower()
+    if not name.startswith("heading") and "見出し" not in name:
+        return 0
+    digits = "".join(c for c in name if c.isdigit())
+    level = int(digits) if digits else 1
+    return min(max(level + 1, 2), 4)
 
 
 def xlsx_text(data: bytes) -> str:
