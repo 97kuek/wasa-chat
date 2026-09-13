@@ -1754,6 +1754,22 @@ export default function App() {
               handleAsk(question);
             }}
           >
+            {/* 参照先を足す「+」は入力欄の**左**。文字を打つ前に決めるものなので、
+                送信・添付（右側の操作）とは役割が違う（2026-09-13の指摘） */}
+            <ToolMenu
+              tools={availableTools}
+              enabled={enabledTools}
+              onChange={(next) => {
+                setEnabledTools(next);
+                writeStored("local", TOOLS_KEY, JSON.stringify(next));
+              }}
+              discordServer={discordServer}
+              onDiscordServerChange={(id) => {
+                setDiscordServer(id);
+                writeStored("local", DISCORD_SERVER_KEY, id);
+              }}
+              disabled={streaming}
+            />
             <textarea
               ref={questionInput}
               value={question}
@@ -1785,20 +1801,6 @@ export default function App() {
                   event.target.value = "";
                   void attachImage(file);
                 }}
-              />
-              <ToolMenu
-                tools={availableTools}
-                enabled={enabledTools}
-                onChange={(next) => {
-                  setEnabledTools(next);
-                  writeStored("local", TOOLS_KEY, JSON.stringify(next));
-                }}
-                discordServer={discordServer}
-                onDiscordServerChange={(id) => {
-                  setDiscordServer(id);
-                  writeStored("local", DISCORD_SERVER_KEY, id);
-                }}
-                disabled={streaming}
               />
               <button
                 type="button"

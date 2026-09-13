@@ -9,6 +9,21 @@ const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8
 const admin = readFileSync(new URL("../src/admin/AdminPage.tsx", import.meta.url), "utf8");
 const adminApi = readFileSync(new URL("../src/admin/api.ts", import.meta.url), "utf8");
 
+test("「+」は入力欄の左、送信と添付は右", () => {
+  // 参照先は文字を打つ前に決めるもので、送信・添付とは役割が違う（2026-09-13の指摘）。
+  // ⚠️ 3列（「+」/ 入力欄 / 右の操作）。2列に戻すと「+」が右へ寄る
+  assert.match(styles, /\.composer \{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\) auto;/);
+  const composer = page.slice(page.indexOf('className="composer"'));
+  assert.ok(
+    composer.indexOf("<ToolMenu") < composer.indexOf("<textarea"),
+    "「+」が入力欄より後ろにある",
+  );
+  assert.ok(
+    composer.indexOf("<textarea") < composer.indexOf('className="composer-actions"'),
+    "右の操作が入力欄より前にある",
+  );
+});
+
 test("入力欄の「+」から外部サービスとの連携をオン・オフできる", () => {
   assert.match(page, /<ToolMenu/);
   assert.match(menu, /tool-trigger/);
@@ -136,10 +151,10 @@ test("スマホでは、開いた一覧が画面からはみ出さない", () =>
   // ⚠️ 「+」は入力欄の右寄り、お知らせは見出しの右端にある。片側だけ留めて
   // 幅を持たせると、そこから右へ開いて**本文が切れる**（2026-09-13にiPhoneで指摘）。
   // 左右の両端を留めれば、幅は画面が決める
-  // 広い画面でも、左端を基準にすると幅ぶん右へ伸びてはみ出す。右端から左へ開く。
+  // 開く向きは「+」の位置と合わせる。ボタンは入力欄の左端なので、左から右へ開く。
   // ⚠️ 規則の中だけを見る（[^}]）。[\s\S]*? だと `}` を越えて別の規則を拾う
-  assert.match(styles, /\.tool-popover \{[^}]*right: 0;/);
-  assert.doesNotMatch(styles, /\.tool-popover \{[^}]*left: 0;/);
+  assert.match(styles, /\.tool-popover \{[^}]*left: 0;/);
+  assert.doesNotMatch(styles, /\.tool-popover \{[^}]*right: 0;/);
 
   const narrow = styles.slice(styles.indexOf("@media (max-width: 560px)"));
   assert.match(narrow, /\.tool-popover \{[^}]*left: var\(--chat-gutter\);[^}]*right: var\(--chat-gutter\);/);
