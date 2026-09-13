@@ -114,13 +114,26 @@ func (s *Server) calendarIntegration(ctx context.Context) Integration {
 			"CALENDAR_IDS にカレンダーIDを設定してください（docs/07 §5.7）。"
 		return found
 	}
+	// **管理画面を予定表の応答待ちにしない。** 読めなくても状態は出せる
+	ctx, cancel := context.WithTimeout(ctx, calendarTimeout)
+	defer cancel()
+
 	events, err := calendar.Fetch(ctx, s.cfg.CalendarIDs)
-	if err != nil || len(events) == 0 {
+	if err != nil {
 		found.NextStep = "設定はありますが予定を読めていません。共有設定とカレンダーIDを確かめてください。"
 		return found
 	}
+	// ⚠️ **「予定が0件」と「読めない」を混ぜない。** 以前は0件も未接続として
+	// 扱っており、正しく設定できているのに「共有設定を確かめてください」と出た。
+	// 設定した直後は範囲内に予定が無いことが普通にあるので、**直したばかりの
+	// 設定を疑わせる**表示になる。読めたなら、つながっている
 	found.Connected = true
 	found.Detail = calendar.CalendarNames(events)
+	if len(events) == 0 {
+		found.Summary = fmt.Sprintf("読めていますが、%d日前〜%d日後に予定がありません",
+			calendar.PastDays, calendar.FutureDays)
+		return found
+	}
 	found.Summary = fmt.Sprintf("%d件の予定を読めています（%d日前〜%d日後）",
 		len(events), calendar.PastDays, calendar.FutureDays)
 	return found
