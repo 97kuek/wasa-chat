@@ -27,7 +27,7 @@ func geminiHTTPResponse(status int, body string) *http.Response {
 func TestGeminiRetriesTemporaryFailure(t *testing.T) {
 	var calls atomic.Int32
 	var observed atomic.Int32
-	g := NewGemini("test-key", "test-model", 0, 1)
+	g := NewGeminiProfiles("test-key", ModelProfiles{Default: "test-model"}, 0, 1)
 	g.SetAttemptObserver(func(_ context.Context, attempt APIAttempt) {
 		if attempt.Model != "test-model" || attempt.Method != "generateContent" {
 			t.Errorf("送信通知の内容が不正: %+v", attempt)
@@ -89,7 +89,7 @@ func TestGeminiUsesFixedDefaultModel(t *testing.T) {
 }
 
 func TestGeminiLegacyModelOmitsThinkingLevel(t *testing.T) {
-	g := NewGemini("test-key", "gemini-2.5-flash", 0, 0)
+	g := NewGeminiProfiles("test-key", ModelProfiles{Default: "gemini-2.5-flash"}, 0, 0)
 	config := g.payload(Request{MaxTokens: 300, Profile: ProfileDeep}, "gemini-2.5-flash")["generationConfig"].(map[string]any)
 	if _, exists := config["thinkingConfig"]; exists {
 		t.Fatal("thinkingLevel非対応モデルへ設定を送っている")
@@ -101,7 +101,7 @@ func TestGeminiLegacyModelOmitsThinkingLevel(t *testing.T) {
 
 func TestGeminiStopsRequestsDuringRateLimitCooldown(t *testing.T) {
 	var calls atomic.Int32
-	g := NewGemini("test-key", "test-model", 0, 0)
+	g := NewGeminiProfiles("test-key", ModelProfiles{Default: "test-model"}, 0, 0)
 	g.http = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		calls.Add(1)
 		return geminiHTTPResponse(http.StatusTooManyRequests, `{}`), nil
@@ -123,7 +123,7 @@ func TestGeminiStopsRequestsDuringRateLimitCooldown(t *testing.T) {
 }
 
 func TestGeminiReportsIntervalWait(t *testing.T) {
-	g := NewGemini("test-key", "test-model", 20*time.Millisecond, 0)
+	g := NewGeminiProfiles("test-key", ModelProfiles{Default: "test-model"}, 20*time.Millisecond, 0)
 	g.http = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return geminiHTTPResponse(http.StatusOK,
 			`{"candidates":[{"content":{"parts":[{"text":"完了"}]}}]}`), nil
@@ -193,7 +193,7 @@ func TestDailyQuotaMatchesRealResponseBody(t *testing.T) {
 
 func TestGeminiDoesNotRetryDailyQuota(t *testing.T) {
 	var calls atomic.Int32
-	g := NewGemini("test-key", "test-model", 0, 2)
+	g := NewGeminiProfiles("test-key", ModelProfiles{Default: "test-model"}, 0, 2)
 	g.http = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		calls.Add(1)
 		return geminiHTTPResponse(http.StatusTooManyRequests,

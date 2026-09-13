@@ -52,10 +52,6 @@ type ModelProfiles struct {
 	Deep     string
 }
 
-func NewGemini(key, model string, minInterval time.Duration, maxRetries int) *Gemini {
-	return NewGeminiProfiles(key, ModelProfiles{Default: model}, minInterval, maxRetries)
-}
-
 func NewGeminiProfiles(key string, models ModelProfiles, minInterval time.Duration, maxRetries int) *Gemini {
 	if minInterval < 0 {
 		minInterval = 0
