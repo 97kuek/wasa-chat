@@ -1944,18 +1944,30 @@ select:focus-visible {
   background: var(--accent);
 }
 
-/* 入力欄の上へ出す。下に出すと画面外へはみ出る（入力欄は最下部にある） */
+/* 入力欄の上へ出す。下に出すと画面外へはみ出る（入力欄は最下部にある）。
+   ⚠️ **高さを止める。** 上へ伸びる作りなので、項目が増えたり説明が折り返したり
+   するたびに**中身が上へせり上がって**読んでいた場所が動く（2026-09-13の指摘）。
+   入りきらない分は中で送る */
 .tool-popover {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
   z-index: 20;
-  width: min(340px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 40px));
+  max-height: min(58vh, 420px);
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
   box-shadow: 0 12px 32px rgb(0 0 0 / 12%);
+}
+
+/* 見出しは止めて、一覧だけを送る */
+.tool-popover > ul {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tool-popover-head {
@@ -1991,7 +2003,13 @@ select:focus-visible {
 
 .tool-item-name { font-size: 13px; font-weight: 600; }
 
+/* ⚠️ **説明は2行まで。** 3行4行と折り返すと、その項目だけ背が高くなり、
+   一覧全体が上へ伸びる。全文はサポートページにある */
 .tool-item-note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;

@@ -45,8 +45,14 @@ func Search(ctx context.Context, botToken, guildID, query string, allowed []Chan
 		return nil, ErrNoPublicChannels
 	}
 	names := make(map[string]string, len(allowed))
+	// ⚠️ **質問文をそのまま渡さない。** 語の一致で探すので必ず0件になる。
+	// 語が取れない質問（「教えてください」だけ等）は、投げても0件なので検索しない
+	term := SearchQuery(query)
+	if term == "" {
+		return nil, nil
+	}
 	values := url.Values{}
-	values.Set("content", strings.TrimSpace(query))
+	values.Set("content", term)
 	for _, channel := range allowed {
 		names[channel.ID] = channel.Name
 		// **チャンネルを明示して検索する。** 省略すると、ボットが見える

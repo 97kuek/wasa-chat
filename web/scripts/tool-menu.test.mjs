@@ -125,3 +125,14 @@ test("共有相手のアドレスは選んでコピーできる形で出す", ()
   assert.match(admin, /共有相手に追加するアドレス/);
   assert.match(styles, /\.admin-link-share code \{[\s\S]*?user-select: all;/);
 });
+
+test("項目が増えても一覧が上へせり上がらない", () => {
+  // ⚠️ 上へ伸びる作りなので、高さを止めないと読んでいた場所が動く（2026-09-13の指摘）
+  assert.match(styles, /\.tool-popover \{[\s\S]*?max-height: min\(58vh, 420px\)/);
+  assert.match(styles, /\.tool-popover > ul \{[\s\S]*?overflow-y: auto;/);
+});
+
+test("説明は2行までに収める", () => {
+  // 3行4行と折り返すと、その項目だけ背が高くなって一覧全体が伸びる
+  assert.match(styles, /\.tool-item-note \{[\s\S]*?-webkit-line-clamp: 2;/);
+});

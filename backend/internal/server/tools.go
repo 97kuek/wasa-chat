@@ -97,9 +97,11 @@ func (s *Server) allowedTools(ctx context.Context, user string, requested []stri
 
 func (s *Server) tools(ctx context.Context, user string) []Tool {
 	drive := Tool{
-		ID:          pipeline.ToolDrive,
-		Name:        "共有ドライブ",
-		Description: "wasa.birdman@gmail.com のドライブにある引き継ぎ資料。Wikiに書かれていない議事録・設計を読みます",
+		ID:   pipeline.ToolDrive,
+		Name: "共有ドライブ",
+		// **短くする。** 説明が3行に折り返すと、その項目だけ背が高くなって
+		// 一覧が上へ伸びる（2026-09-13の指摘）。詳細はサポートページにある
+		Description: "wasa.birdman@gmail.com のドライブの引き継ぎ資料",
 	}
 	switch {
 	case s.live.Current().DriveTOC == "":
