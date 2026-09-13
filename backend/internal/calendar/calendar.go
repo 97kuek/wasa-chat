@@ -124,27 +124,60 @@ func Fetch(ctx context.Context, calendarIDs []string) ([]Event, error) {
 	}
 	now := time.Now()
 	var events []Event
+	var lastErr error
 	for _, id := range calendarIDs {
 		found, err := list(ctx, client, id, now)
 		if err != nil {
 			// 読めないカレンダーは飛ばす。ほかは読める
+			lastErr = err
 			continue
 		}
 		events = append(events, found...)
+	}
+	// ⚠️ **1つも読めなかったときは、そう言う。** 空の一覧を返すと
+	// 「予定が無い」と区別できず、共有の設定漏れが誰にも気づかれない
+	// （カレンダーIDを入れたのに何も出ない、という形でしか現れない）
+	if len(events) == 0 && lastErr != nil {
+		return nil, lastErr
 	}
 	sort.Slice(events, func(a, b int) bool {
 		left, _ := events[a].Start.at()
 		right, _ := events[b].Start.at()
 		return left.Before(right)
 	})
-	if len(events) > MaxEvents {
-		events = events[:MaxEvents]
-	}
+	events = trim(events, now)
 
 	cacheMu.Lock()
 	cache[key] = cached{events: events, at: time.Now()}
 	cacheMu.Unlock()
 	return events, nil
+}
+
+// trim は MaxEvents に収まるよう予定を間引く。
+//
+// ⚠️ **先に捨てるのは古いほうである。** 以前は開始の早い順に並べたあと
+// 先頭から MaxEvents 件を残しており、予定が多い時期ほど**これからの予定が
+// 丸ごと消えた**。「次のTFはいつ？」は、部が忙しいときにこそ聞かれる。
+//
+// これからの予定を全部入れたうえで、余った枠を新しい過去から埋める。
+func trim(events []Event, now time.Time) []Event {
+	if len(events) <= MaxEvents {
+		return events
+	}
+	var past, future []Event
+	for _, event := range events {
+		if finished(event, now) {
+			past = append(past, event)
+		} else {
+			future = append(future, event)
+		}
+	}
+	if len(future) >= MaxEvents {
+		return future[:MaxEvents]
+	}
+	// 過去は新しいほうから残す（並びは開始の早い順なので後ろが新しい）
+	keep := past[len(past)-(MaxEvents-len(future)):]
+	return append(keep, future...)
 }
 
 func list(ctx context.Context, client *http.Client, calendarID string, now time.Time) ([]Event, error) {
@@ -194,14 +227,12 @@ func list(ctx context.Context, client *http.Client, calendarID string, now time.
 // モデルが終わった予定を「予定です」と書く。日付の比較をモデルに任せない。
 func Transcript(events []Event, now time.Time) string {
 	var past, future []string
-	today := now.In(japanTime)
 	for _, event := range events {
 		line := format(event)
 		if line == "" {
 			continue
 		}
-		start, ok := event.Start.at()
-		if ok && start.Before(today) {
+		if finished(event, now) {
 			past = append(past, line)
 		} else {
 			future = append(future, line)
@@ -222,6 +253,26 @@ func Transcript(events []Event, now time.Time) string {
 		out.WriteString("\n")
 	}
 	return out.String()
+}
+
+// finished は、その予定がもう終わっているかを返す。
+//
+// ⚠️ **終わりで判断する（始まりではない）。** 開始時刻で分けると、
+//
+//   - 今日の終日の予定は、開始が今日の0時なので**昼には「終わった予定」**になる
+//   - 14〜17時の予定は、15時に聞くと**進行中なのに「終わった」**と出る
+//
+// 終日の予定は Google の end.date が翌日（終わりは含まない）なので、
+// この比較でそのまま正しく today のうちは「これから」に入る。
+// 終わりが取れない予定だけ、始まりで判断する。
+func finished(event Event, now time.Time) bool {
+	at, ok := event.End.at()
+	if !ok {
+		if at, ok = event.Start.at(); !ok {
+			return false
+		}
+	}
+	return at.Before(now)
 }
 
 func format(event Event) string {
@@ -259,7 +310,7 @@ func flatten(text string) string {
 	return text
 }
 
-// Scope はこの範囲を読んだ、という説明。画面と出典に出す。
+// ScopeNote はこの範囲を読んだ、という説明。画面と出典に出す。
 func ScopeNote(events int, calendars []string) string {
 	return fmt.Sprintf("%s の予定（%d日前〜%d日後）から%d件を読みました",
 		strings.Join(calendars, "・"), PastDays, FutureDays, events)

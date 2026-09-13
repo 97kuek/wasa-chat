@@ -36,6 +36,61 @@ func TestTranscriptSplitsAtToday(t *testing.T) {
 	}
 }
 
+// ⚠️ **今日の予定を「終わった」と書かない。** 開始時刻で分けていたころは、
+// 今日の終日の予定が（開始が0時なので）昼には終わった扱いになり、
+// 進行中の予定も「終わった予定」に並んでいた
+func TestTranscriptKeepsTodayInFuture(t *testing.T) {
+	now := time.Date(2026, 9, 13, 15, 0, 0, 0, japanTime)
+	events := []Event{
+		// 終日の予定。Googleの end.date は翌日（終わりを含まない）
+		{Summary: "鳥人間コンテスト", Start: allDay("2026-09-13"), End: allDay("2026-09-14")},
+		// いま進行中
+		{Summary: "荷重試験", Start: at("2026-09-13 14:00"), End: at("2026-09-13 17:00")},
+		// 本当に終わっている
+		{Summary: "朝の打ち合わせ", Start: at("2026-09-13 09:00"), End: at("2026-09-13 10:00")},
+	}
+	got := Transcript(events, now)
+
+	future := strings.Index(got, "## これからの予定")
+	if future < 0 {
+		t.Fatalf("これからの予定が1件も無い:\n%s", got)
+	}
+	for _, want := range []string{"鳥人間コンテスト", "荷重試験"} {
+		if strings.Index(got, want) < future {
+			t.Fatalf("%s を終わった予定に入れている:\n%s", want, got)
+		}
+	}
+	if at := strings.Index(got, "朝の打ち合わせ"); at < 0 || at > future {
+		t.Fatalf("終わった予定をこれからに入れている:\n%s", got)
+	}
+}
+
+// ⚠️ **枠が足りないときに捨てるのは古いほう。** 開始の早い順に先頭から
+// 残していたころは、予定が多い時期ほど「これからの予定」が丸ごと消えた。
+// 「次のTFはいつ？」は、部が忙しいときにこそ聞かれる
+func TestTrimKeepsFutureEvents(t *testing.T) {
+	now := time.Date(2026, 9, 13, 12, 0, 0, 0, japanTime)
+	var events []Event
+	for i := 0; i < MaxEvents; i++ {
+		events = append(events, Event{
+			Summary: "過去の定例",
+			Start:   at("2026-08-01 10:00"), End: at("2026-08-01 11:00"),
+		})
+	}
+	events = append(events, Event{
+		Summary: "次のテストフライト",
+		Start:   at("2026-10-01 05:00"), End: at("2026-10-01 12:00"),
+	})
+
+	got := trim(events, now)
+	if len(got) != MaxEvents {
+		t.Fatalf("上限に収めていない: %d件", len(got))
+	}
+	if !strings.Contains(Transcript(got, now), "次のテストフライト") {
+		t.Fatal("これからの予定を捨てている")
+	}
+}
+
 // 終日の予定に時刻を出さない。時刻つきは時刻まで出す
 func TestFormatShowsTimeOnlyWhenSet(t *testing.T) {
 	whole := format(Event{Summary: "合宿", Start: allDay("2026-08-01"), End: allDay("2026-08-03")})
