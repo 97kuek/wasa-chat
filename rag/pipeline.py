@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -78,6 +79,24 @@ class LLM(Protocol):
 
     def __call__(self, prompt: str, schema: dict | None = None, max_tokens: int = 800,
                  profile: str = "fast") -> Any: ...
+
+
+
+def normalize(text: str) -> str:
+    """表記ゆれを均す。**質問と本文の両方に同じ処理をかけること。**
+
+    ⚠️ **backend/internal/pipeline/normalize.go と同じ規則にすること。**
+    ずれると測定値が本番を説明しなくなる（eval/test_parity.py が見張る）。
+
+    実データでの出現（docs/08 M68）:
+        シミュレータ 19回 / シミュレーター 33回、モータ 57回 / モーター 33回
+        TR797 5回 / TR-797 10回、全角の「１」909回
+    """
+    text = unicodedata.normalize("NFKC", text).lower()
+    # 型番の中の区切りを落とす（tr-797 → tr797）。語と語の間のハイフンは残す
+    text = re.sub(r"(?<=[0-9a-z])[-_](?=[0-9])", "", text)
+    # カタカナ語末の長音を落とす。**語中の長音は残す**（データベースを壊さない）
+    return re.sub(r"ー(?![ァ-ヶ])", "", text)
 
 
 @dataclass
@@ -347,7 +366,8 @@ class Pipeline:
 
     @staticmethod
     def normalize_identifier(value: str) -> str:
-        return value.lower().replace("-", "").replace("_", "")
+        """型番を比べられる形にする。共通の normalize より強く、区切りを全部落とす。"""
+        return normalize(value).replace("-", "").replace("_", "")
 
     # ------------------------------------------------------------------
     # Stage 2: ページ内のチャンクを絞る
@@ -504,13 +524,16 @@ class Pipeline:
         精度は高くないが「何も答えられない」よりはよい。
         """
         scores: list[tuple[int, str]] = []
-        grams = {question[i : i + 2] for i in range(len(question) - 1)}
+        # **質問と本文の両方に同じ正規化をかける。** 片方だけだと、
+        # 「シミュレーター」で聞いて「シミュレータ」と書かれた資料に当たらない
+        normalized = normalize(question)
+        grams = {normalized[i : i + 2] for i in range(len(normalized) - 1)}
         for title, page in self.pages.items():
             # **救済経路でも出所の指定は効かせる。** ここだけ緩めると、
             # 「公式サイトに載っていますか」に引き継ぎWikiを返せてしまう
             if not self.question_allows_origin(question, title):
                 continue
-            hay = title + " " + " ".join(page["headings"]) + " " + page["lead"][:200]
+            hay = normalize(title + " " + " ".join(page["headings"]) + " " + page["lead"][:200])
             scores.append((sum(1 for g in grams if g in hay), title))
         scores.sort(reverse=True)
         return [t for score, t in scores[:MAX_PAGES] if score > 0]

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import math
+import unicodedata
 import re
 import sys
 from collections import Counter, defaultdict
@@ -49,13 +50,40 @@ def question_with_history(question: dict) -> str:
     return "\n".join(lines)
 
 
+def normalize(text: str) -> str:
+    """表記ゆれを均す。**質問と本文の両方に同じ処理をかけること。**
+
+    部内資料は複数人が書くので、同じ語が違う書き方で入る。実データで測った
+    （2026-09-13、M68）:
+
+        シミュレータ 19回 / シミュレーター 33回
+        モータ 57回 / モーター 33回
+        サーバ 2回 / サーバー 21回
+        TR797 5回 / TR-797 10回
+        全角の「１」909回、「Ａ」172回
+
+    ⚠️ **特定の設問に合わせた処理ではない。** どの語にも同じ規則をかける
+    （長音を落とす、全角英数字を半角にする、英数字の中の区切りを落とす）。
+    """
+    text = unicodedata.normalize("NFKC", text).lower()
+    # 英数字の中に入った区切りを落とす（tr-797 → tr797）。
+    # 語と語の間のハイフンは残す（英単語の複合語を壊さないため）
+    text = re.sub(r"(?<=[0-9a-z])[-_](?=[0-9])", "", text)
+    # カタカナ語末の長音を落とす（シミュレーター → シミュレータ）。
+    # **語中の長音は残す。**「コーヒー」の最初のーを落とすと別の語になる
+    text = re.sub(r"ー(?![ァ-ヶ])", "", text)
+    return text
+
+
 def tokenize(text: str) -> list[str]:
     """日本語は文字bigram、英数字は単語単位で切る。
 
     形態素解析器を使わない代わりに、CJKは文字bigramで近似する。
     「主翼桁」が「主翼」「翼桁」に分かれるため、部分一致も拾える。
+
+    表記ゆれは normalize() で先に均す。質問と本文の両方に同じ処理がかかる。
     """
-    text = text.lower()
+    text = normalize(text)
     tokens: list[str] = []
     for run in re.findall(r"[a-z0-9]+|[^\sa-z0-9]+", text):
         if re.match(r"^[a-z0-9]+$", run):

@@ -145,8 +145,15 @@ class BehaviourTest(unittest.TestCase):
     """
 
     def test_決定的候補の合流順が一致する(self):
-        # M24: 順序を変えると 19/33 → 18/33 に退行する
-        self.assertIn("directTitlePages(ix, question, a), identifierPages(ix, question, a), linkPages(ix, question, a)", GO)
+        # M24: 順序を変えると 19/33 → 18/33 に退行する。
+        #
+        # ⚠️ **引数名に縛らない。** 以前は `(ix, question, a)` と書き写していたため、
+        # 参照範囲を Scope 型へまとめて引数名が `sc` になっただけで落ちた
+        # （2026-09-13）。見たいのは順序であって名前ではない。
+        order = re.search(
+            r"directTitlePages\([^)]*\),\s*identifierPages\([^)]*\),\s*linkPages\([^)]*\)", GO
+        )
+        self.assertTrue(order, "Go側の合流順が「実在タイトル → 型番 → リンク」になっていない")
         self.assertIn("self.direct_title_pages(question)", PY)
         order = re.search(
             r"for title in \(\s*self\.direct_title_pages\(question\)\s*\+ self\.identifier_pages\(question\)\s*\+ self\.link_pages\(question\)\s*\)",
@@ -157,6 +164,29 @@ class BehaviourTest(unittest.TestCase):
     def test_出所の絞り込みが両方にある(self):
         self.assertIn("func questionAllowsOrigin(", GO)
         self.assertIn("def question_allows_origin(", PY)
+
+    def test_表記ゆれの正規化が一致する(self):
+        """⚠️ **評価と本番で同じ規則にすること。**
+
+        ずれると、評価で良くなった改善が本番で効かない。実測では、この正規化で
+        Hit@5 が 51.5%→54.5% に上がった（docs/08 M68）。評価側だけに入れて
+        満足すると、その3ポイントは利用者に届かない。
+        """
+        harness = (ROOT / "eval" / "retrieval_eval.py").read_text(encoding="utf-8")
+        go = (ROOT / "backend" / "internal" / "pipeline" / "normalize.go").read_text(encoding="utf-8")
+
+        # 語末の長音を落とす規則
+        self.assertIn("ー(?![ァ-ヶ])", harness, "評価側に語末の長音の処理が無い")
+        self.assertIn("ー([^ァ-ヶ]|$)", go, "本番側に語末の長音の処理が無い")
+
+        # 型番の中の区切りを落とす規則
+        self.assertIn("(?<=[0-9a-z])[-_](?=[0-9])", harness, "評価側に型番の区切りの処理が無い")
+        self.assertIn("([0-9a-z])[-_]([0-9])", go, "本番側に型番の区切りの処理が無い")
+
+        # 全角→半角（NFKC）と小文字化
+        for name, text in (("評価", harness), ("本番", go)):
+            self.assertIn("NFKC", text, f"{name}側に全角→半角の処理が無い")
+            self.assertIn("ower", text, f"{name}側に小文字化が無い")
 
     def test_救済経路でも出所を絞る(self):
         # ほかの候補は add() を通るが、fallback はそのまま使われるため抜けやすい

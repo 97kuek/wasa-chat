@@ -1021,9 +1021,13 @@ func identifierPages(ix *index.Index, question string, sc Scope) []*index.Page {
 	return out
 }
 
+// normalizeIdentifier は型番を比べられる形にする。
+//
+// 共通の Normalize（全角→半角、語末の長音落とし）を通したうえで、
+// **型番では区切りを全部落とす**。`DAE-51` と `DAE51` を同じものとして扱うため。
+// Normalize 側は「前が英数字・後ろが数字」のときだけ落とすので、ここで補う。
 func normalizeIdentifier(value string) string {
-	value = strings.ToLower(value)
-	return strings.NewReplacer("-", "", "_", "").Replace(value)
+	return strings.NewReplacer("-", "", "_", "").Replace(Normalize(value))
 }
 
 func questionIdentifiers(question string) map[string]bool {
@@ -1041,7 +1045,9 @@ func questionIdentifiers(question string) map[string]bool {
 // 目次に対する素朴な字面一致。精度は高くないが「何も答えられない」よりはよい。
 func fallbackPages(ix *index.Index, question string, sc Scope) []*index.Page {
 	grams := map[string]bool{}
-	runes := []rune(question)
+	// **質問と本文の両方に同じ正規化をかける。** 片方だけだと、
+	// 「シミュレーター」で聞いて「シミュレータ」と書かれた資料に当たらない
+	runes := []rune(Normalize(question))
 	for i := 0; i+1 < len(runes); i++ {
 		grams[string(runes[i:i+2])] = true
 	}
@@ -1067,6 +1073,7 @@ func fallbackPages(ix *index.Index, question string, sc Scope) []*index.Page {
 		for _, c := range pg.Chunks {
 			hay += " " + c.Breadcrumb
 		}
+		hay = Normalize(hay)
 		score := 0
 		for g := range grams {
 			if strings.Contains(hay, g) {
