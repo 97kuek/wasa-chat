@@ -189,6 +189,28 @@ func TestSplitMessagesBreaksOnBoundary(t *testing.T) {
 	}
 }
 
+// 本文が空で、出典だけで上限を超えると1通も作れない。
+// **そこで落ちないこと。** 添字 -1 に触ってパニックし、Cloud Runの
+// インスタンスごと巻き添えにしていた（処理中の他の質問まで落ちる）
+func TestFormatAnswerSurvivesEmptyBody(t *testing.T) {
+	sources := make([]Source, 0, 30)
+	for i := 0; i < 30; i++ {
+		sources = append(sources, Source{
+			Title: "とても長い日本語のタイトルが並ぶ出典",
+			URL:   "https://example.com/wiki/%E3%81%82%E3%81%84%E3%81%86%E3%81%88%E3%81%8A",
+		})
+	}
+	got := FormatAnswer("質問", "", sources)
+	if len(got) == 0 {
+		t.Fatal("何も返らない。「考えています」が残り続ける")
+	}
+	for _, message := range got {
+		if Length(message) > MessageLimit {
+			t.Fatalf("上限を超えている: %d", Length(message))
+		}
+	}
+}
+
 func TestFormatAnswerWithoutSources(t *testing.T) {
 	got := strings.Join(FormatAnswer("質問", "資料に記載がありません。", nil), "\n")
 	if strings.Contains(got, "参照") {

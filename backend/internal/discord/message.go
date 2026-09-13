@@ -94,12 +94,21 @@ func splitMessages(head, body, tail string, limit, maxCount int) []string {
 		}
 		messages = append(messages, prefix+chunk+suffix)
 	}
+	// 本文が空で、頭と出典だけで上限を超えるときは1通も作られない。
+	// **その場合でも出典は出す。** 空の配列を返すと、Discordには何も届かず
+	// 「考えています」が残り続ける（以前はここで添字 -1 を触って落ちていた）
+	if len(messages) == 0 {
+		if tail == "" {
+			return nil
+		}
+		return []string{truncateTo(strings.TrimPrefix(tail, "\n\n"), limit)}
+	}
 	// 途中で本文が尽きたら、出典はそのまま最後の1通へ足す
 	if remaining == "" && tail != "" && !strings.HasSuffix(messages[len(messages)-1], tail) {
 		if index := len(messages) - 1; Length(messages[index])+Length(tail) <= limit {
 			messages[index] += tail
 		} else {
-			messages = append(messages, strings.TrimPrefix(tail, "\n\n"))
+			messages = append(messages, truncateTo(strings.TrimPrefix(tail, "\n\n"), limit))
 		}
 	}
 	return messages

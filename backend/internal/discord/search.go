@@ -57,24 +57,44 @@ func Search(ctx context.Context, botToken, guildID string, terms []string, allow
 	}
 
 	f := &fetcher{token: botToken}
-	var hits []Message
-	seen := map[string]bool{}
 	// ⚠️ **語ごとに別のクエリを投げる。** 1つにまとめるとAND条件になり、
 	// 「荷重試験 申請」で21件が1件になる（docs/08 M64）
+	found := make([][]Message, 0, len(terms))
 	for _, term := range terms {
-		found, err := searchOnce(ctx, f, guildID, term, allowed)
+		hits, err := searchOnce(ctx, f, guildID, term, allowed)
 		if err != nil {
 			continue // 1語が失敗してもほかの語は探せる
 		}
-		for _, hit := range found {
-			if seen[hit.ID] {
+		found = append(found, hits)
+	}
+	return withContext(ctx, f, interleave(found), names)
+}
+
+// interleave は語ごとの結果を、1件ずつ順番に取り出して束ねる。
+//
+// ⚠️ **後ろの語を、先頭の語に食わせない。** 語を分けて投げるのはANDで
+// 潰さないためだが（docs/08 M64）、結果を語ごとに前から並べると、1語目が
+// 上限の25件を返した時点で MaxSearchHits の12枠が埋まり、**2語目以降が
+// 1件も読まれない**。分けて投げた意味が結果側で消える。
+func interleave(groups [][]Message) []Message {
+	var out []Message
+	seen := map[string]bool{}
+	for round := 0; ; round++ {
+		remaining := false
+		for _, group := range groups {
+			if round >= len(group) {
 				continue
 			}
-			seen[hit.ID] = true
-			hits = append(hits, hit)
+			remaining = true
+			if hit := group[round]; !seen[hit.ID] {
+				seen[hit.ID] = true
+				out = append(out, hit)
+			}
+		}
+		if !remaining {
+			return out
 		}
 	}
-	return withContext(ctx, f, hits, names)
 }
 
 // searchOnce は1語ぶんの検索。
@@ -128,14 +148,18 @@ func pickHit(group []Message) (Message, bool) {
 func withContext(ctx context.Context, f *fetcher, hits []Message, names map[string]string) ([]ChannelLog, error) {
 	byChannel := map[string][]Message{}
 	seen := map[string]bool{}
-	for i, hit := range hits {
-		if i >= MaxSearchHits {
+	// **読めたヒットの数で止める。** 捨てたぶんも数えると、許可外の
+	// チャンネルのヒットが先頭に並んだだけで枠を使い切ってしまう
+	taken := 0
+	for _, hit := range hits {
+		if taken >= MaxSearchHits {
 			break
 		}
 		channelID := hit.ChannelID
 		if _, ok := names[channelID]; !ok {
 			continue // 許可していないチャンネルのヒットは捨てる
 		}
+		taken++
 		around, err := around(ctx, f, channelID, hit.ID)
 		if err != nil {
 			// 前後が取れなくてもヒット自体は使える

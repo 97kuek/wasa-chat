@@ -57,6 +57,40 @@ func TestSearchFetchesContextAroundHit(t *testing.T) {
 	}
 }
 
+// ⚠️ **1語目の結果で枠を使い切らない。** 語を分けて投げるのはANDで潰さない
+// ためだが（docs/08 M64）、結果を語ごとに前から並べると、1語目が上限まで
+// 返した時点で MaxSearchHits が埋まり、**2語目以降が1件も読まれない**。
+// 分けて投げた意味が結果側で消えていた
+func TestSearchGivesEveryTermAShare(t *testing.T) {
+	stub := &discordStub{pages: map[string][][]Message{}}
+	stub.searchHandler = func(r *http.Request) any {
+		term := r.URL.Query().Get("content")
+		// 1語目だけが上限いっぱい返す状況を作る
+		count := 1
+		if term == "荷重試験" {
+			count = SearchLimit
+		}
+		groups := make([][]Message, 0, count)
+		for i := 0; i < count; i++ {
+			hit := message("部員A", term+"の話", time.Minute)
+			hit.ID = term + "-" + strings.Repeat("x", i+1)
+			hit.ChannelID, hit.Hit = "c1", true
+			groups = append(groups, []Message{hit})
+		}
+		return map[string]any{"messages": groups}
+	}
+	stub.serve(t)
+
+	got, err := Search(t.Context(), "token", "g1", []string{"荷重試験", "申請"}, []Channel{{ID: "c1", Name: "機体班"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript := Transcript(got)
+	if !strings.Contains(transcript, "申請の話") {
+		t.Fatalf("2語目が1件も読まれていない:\n%s", transcript)
+	}
+}
+
 // 許可していないチャンネルのヒットが返ってきても捨てる（二重の防御）
 func TestSearchDropsHitsOutsideAllowed(t *testing.T) {
 	stub := &discordStub{pages: map[string][][]Message{}}

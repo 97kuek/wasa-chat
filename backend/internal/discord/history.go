@@ -21,8 +21,9 @@ const pageSize = 100
 // 投げ、上流へ数十万字を送ることになる。日数の指定（Days）を1年まで広げたぶん
 // （2026-09-13）、実質の歯止めはこちらになった。
 //
-// 5000件 × 1件あたり50字程度 = 25万字。recap 側は6万字ごとに分割するので、
-// 分割の上限（6塊）に収まる。
+// 5000件 × 1件あたり50字程度 = 25万字。recap 側は2万字ごとに分割するが、
+// 塊数の上限が6なので、**上限いっぱいまで読むと1塊が4万字強になる**
+// （recap.maxChunks 参照）。発言は捨てないが、1回あたりの入力は増える。
 const MaxMessages = 5000
 
 // MaxRequests は1回のコマンドで投げるDiscordへのリクエスト数の上限。
@@ -137,7 +138,7 @@ func (c Channel) public(guildID string) bool {
 // ChannelLog は1チャンネルぶんの発言。
 type ChannelLog struct {
 	Channel string
-	// ID は出典のリンクを組み立てるために持つ。**検索のときだけ入る。**
+	// ID は出典のリンクを組み立てるために持つ（discord.MessageURL）
 	ID       string
 	Messages []Message
 }
@@ -309,7 +310,7 @@ func Gather(ctx context.Context, botToken, guildID, channelID string, opts Optio
 			continue
 		}
 		total += len(messages)
-		logs = append(logs, ChannelLog{Channel: target.Name, Messages: messages})
+		logs = append(logs, ChannelLog{Channel: target.Name, ID: target.ID, Messages: messages})
 	}
 	return logs, nil
 }
@@ -429,8 +430,10 @@ func fetchChannel(ctx context.Context, f *fetcher, channelID string, since time.
 		}
 		var page []Message
 		if err := f.get(ctx, url, &page); err != nil {
-			// 途中まで読めていれば、それを使う。全部捨てるほうが損
-			if len(collected) > 0 && (err == errTooManyRequests || err == ErrNoAccess) {
+			// 途中まで読めていれば、それを使う。全部捨てるほうが損。
+			// **errRateLimited もここに含める。** 以前は外れており、3,000件
+			// 読んだあとにDiscordが待てと言ってきただけで全部消えていた
+			if len(collected) > 0 && (err == errTooManyRequests || err == errRateLimited || err == ErrNoAccess) {
 				return collected, nil
 			}
 			return nil, err

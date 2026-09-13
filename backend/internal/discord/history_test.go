@@ -201,6 +201,10 @@ type discordStub struct {
 	// rateLimitOnce を立てると、最初の1回だけ429を返す
 	rateLimitOnce bool
 	limited       bool
+	// rateLimitAfter を立てると、この回数を過ぎた過去ログ取得はすべて429を返す。
+	// 「途中まで読めたあとに止められる」を作るために使う
+	rateLimitAfter int
+	histories      int
 }
 
 func (d *discordStub) serve(t *testing.T) *httptest.Server {
@@ -224,9 +228,15 @@ func (d *discordStub) serve(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("/api/v10/channels/{id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		d.requests++
+		d.histories++
 		if d.rateLimitOnce && !d.limited {
 			d.limited = true
 			w.Header().Set("Retry-After", "0.05")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		if d.rateLimitAfter > 0 && d.histories > d.rateLimitAfter {
+			w.Header().Set("Retry-After", "0.01")
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -292,6 +302,25 @@ func TestGatherPaginates(t *testing.T) {
 	transcript := Transcript(got)
 	if !strings.Contains(transcript, "古-19") || !strings.Contains(transcript, "新-0") {
 		t.Fatal("最初のページしか読んでいない")
+	}
+}
+
+// **待っても上限に当たり続けたとき、読めたぶんまで捨てない。**
+// 以前は errTooManyRequests と ErrNoAccess だけを救っており、100件読んだあとに
+// Discordが「待て」と言ってきただけで全部消えていた
+func TestGatherKeepsWhatItReadBeforeRateLimit(t *testing.T) {
+	stub := &discordStub{
+		pages:          map[string][][]Message{"c1": {page("新", pageSize, time.Minute), page("古", 30, 3*time.Hour)}},
+		rateLimitAfter: 1,
+	}
+	stub.serve(t)
+
+	got, err := Gather(t.Context(), "token", "", "c1", Options{Days: 7})
+	if err != nil {
+		t.Fatalf("読めたぶんがあるのに失敗として返した: %v", err)
+	}
+	if total := CountMessages(got); total != pageSize {
+		t.Fatalf("最初のページを捨てている: %d件", total)
 	}
 }
 

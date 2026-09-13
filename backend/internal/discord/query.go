@@ -96,76 +96,10 @@ func searchTerms(question string) []string {
 	return append(terms, weak...)
 }
 
-// SearchQueryFor は、直前の質問も踏まえて検索語を選ぶ。
-//
-// 短い質問（「最近のは？」）は指示語だけで、そのまま語を取ると「最近」のような
-// 当たらない語になる。前の質問のほうが具体的ならそちらを使う。
-//
-// **長い質問では前の質問を見ない。** 話題が変わったときに引きずると、
-// 関係のない会話を根拠として渡すことになる。
-func SearchQueryFor(question, previous string) string {
-	term := SearchQuery(question)
-	if previous == "" || len([]rune(strings.TrimSpace(question))) > followUpRunes {
-		return term
-	}
-	if earlier := SearchQuery(previous); len([]rune(earlier)) > len([]rune(term)) {
-		return earlier
-	}
-	return term
-}
-
-// SearchQuery は質問から、Discordの検索に渡す語を1つ選ぶ。空なら検索しない。
-//
-// ⚠️ **質問文をそのまま渡さない。** Discordの `content` は語の一致で探すので、
-// 文をまるごと渡すと必ず0件になる。実際にそれで「Discordを見ています」と
-// 言いながら1件も読んでいなかった（2026-09-13に本番で発覚）。
-//
-// ⚠️ **語は1つだけにする。** 複数渡すとAND条件になり、急に当たらなくなる。
-// 同じサーバーで実測した値（2026-09-13、docs/08 M64）:
-//
-//	申請 16件       申請方法 1件
-//	荷重試験 21件    「荷重試験 申請」1件
-//	チャンネル 7件   「チャンネル 名」0件
-//
-// 前後の文脈は `around` で取り、絞り込みはモデルに任せる。ここでは
-// **取りこぼさないこと**を優先する。
-//
-// 選ぶのは「いちばん長い塊」。長い語ほどその質問に固有で、短い語は
-// 助数詞や一般語になりやすい。形態素解析は入れない（辞書と依存が増えるわりに、
-// ここで要るのは助詞と疑問文の型を落とす程度）。**足りなければ測ってから足す。**
-func SearchQuery(question string) string {
-	best, fallback := "", ""
-	for _, chunk := range splitQuestion(question) {
-		if queryStopWords[strings.ToLower(chunk)] {
-			continue
-		}
-		// 数字だけの塊（「40代」の 40、年号）は単独では当たりすぎる。
-		// 「40代の代表は？」で "40" ではなく "代表" を選びたい
-		if len([]rune(chunk)) < minTermRunes || allDigits(chunk) {
-			// 1文字は当たりすぎるので普通は使わない。ただし「桁」「翼」のように
-			// **1文字の部材名**もあるため、他に候補が無ければ使う。
-			// 動詞の語幹（「書」かれて、「教」えて）はここで落とす
-			if fallback == "" && !verbStems[chunk] {
-				fallback = chunk
-			}
-			continue
-		}
-		if len([]rune(chunk)) > len([]rune(best)) {
-			best = chunk
-		}
-	}
-	if best == "" {
-		return fallback
-	}
-	return best
-}
-
-// splitQuestion は質問を、文字の種類が変わるところで区切る。
-//
-// 日本語は空白で区切られないので、**ひらがなの連なりを境目として使う**。
-// 「翼型の設計はどこ」→「翼型」「の」「設計」「はどこ」のように割れ、
-// ひらがなだけの塊を捨てれば名詞が残る。助詞を辞書で持つより壊れにくい。
 // allDigits は数字だけの塊かを返す。
+//
+// 数字だけの塊（「40代」の 40、年号）は単独では当たりすぎる。
+// 「40代の代表は？」では "40" ではなく "代表" を先に使いたい。
 func allDigits(chunk string) bool {
 	for _, r := range chunk {
 		if r < '0' || r > '9' {
@@ -175,6 +109,13 @@ func allDigits(chunk string) bool {
 	return chunk != ""
 }
 
+// splitQuestion は質問を、文字の種類が変わるところで区切る。
+//
+// 日本語は空白で区切られないので、**ひらがなの連なりを境目として使う**。
+// 「翼型の設計はどこ」→「翼型」「の」「設計」「はどこ」のように割れ、
+// ひらがなだけの塊を捨てれば名詞が残る。助詞を辞書で持つより壊れにくい。
+// 形態素解析は入れない（辞書と依存が増えるわりに、ここで要るのは助詞と
+// 疑問文の型を落とす程度）。**足りなければ測ってから足す。**
 func splitQuestion(question string) []string {
 	var chunks []string
 	var current strings.Builder
