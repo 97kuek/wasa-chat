@@ -301,8 +301,7 @@ export default function App() {
 			setView("chat");
 		}
       if (current.authenticated) {
-        void restoreHistory();
-        void refreshAssistants();
+        void restoreAfterSignIn();
       }
     });
   }, []);
@@ -479,9 +478,18 @@ export default function App() {
 			history.replaceState(null, "", "/");
 			setView("chat");
 		}
-    void restoreHistory();
-    void refreshAssistants();
-    void refreshTools();
+    void restoreAfterSignIn();
+  }
+
+  /**
+   * ログイン後に読み直すもの。
+   *
+   * **起動時（セッション復元）とログイン直後で同じ関数を通す。** 以前は2か所へ
+   * 並べて書いており、参照先の一覧（「+」）を片方だけに足していたため、
+   * **一度ログインしたまま開き直すと「+」が消えていた**（2026-09-13に発覚）。
+   */
+  async function restoreAfterSignIn() {
+    await Promise.all([restoreHistory(), refreshAssistants(), refreshTools()]);
   }
 
   async function handleLogout() {

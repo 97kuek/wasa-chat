@@ -25,7 +25,7 @@ test("使えない参照先も一覧に出し、理由を書く", () => {
 
 test("参照先はサーバーが決める（画面に固定で並べない）", () => {
   assert.match(api, /\$\{API_ORIGIN\}\/api\/tools/);
-  assert.match(page, /void refreshTools\(\);/);
+  assert.match(page, /refreshTools\(\)\]\)/);
   // 使えなくなったものをオンのまま残さない。表示と実際の参照先が食い違う
   assert.match(page, /current\.filter\(\(id\) => list\.some\(\(tool\) => tool\.id === id && tool\.available\)\)/);
 });
@@ -66,4 +66,15 @@ test("選んでいたサーバーが無くなったら「すべて」へ戻す",
 
 test("オンのときだけサーバーを選ばせる", () => {
   assert.match(menu, /enabled\.includes\(tool\.id\) && tool\.servers/);
+});
+
+test("起動時もログイン直後も、同じ関数で参照先を読み直す", () => {
+  // ⚠️ 以前は2か所へ並べて書いており、参照先の一覧を片方だけに足していたため、
+  // 一度ログインしたまま開き直すと「+」が消えていた（2026-09-13に発覚）
+  assert.match(page, /async function restoreAfterSignIn\(\)/);
+  assert.match(page, /Promise\.all\(\[restoreHistory\(\), refreshAssistants\(\), refreshTools\(\)\]\)/);
+  // 呼び出しは2か所（起動時とログイン直後）。個別に並べ直さない
+  const calls = page.match(/void restoreAfterSignIn\(\);/g) ?? [];
+  assert.equal(calls.length, 2);
+  assert.doesNotMatch(page, /void refreshTools\(\);/);
 });

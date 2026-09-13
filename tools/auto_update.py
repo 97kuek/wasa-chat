@@ -187,6 +187,19 @@ def drive_snapshot() -> dict:
         return {}
 
 
+def with_unchanged(previous: dict | None, snapshot: dict, rebuilt: set[str]) -> dict:
+    """取り直した出所だけ新しい基準にし、それ以外は前回のまま残す。
+
+    基準と索引の中身がずれると、ずれた出所は変更なしと判断され続けて
+    永久に取り込まれない。取り直した範囲だけを進めることでずれを防ぐ。
+    """
+    merged = dict(snapshot)
+    for key, value in (previous or {}).items():
+        if key not in rebuilt:
+            merged[key] = value
+    return merged
+
+
 def source_counts(index: dict) -> Counter:
     return Counter((page.get("source") or "wiki") for page in index["pages"])
 
@@ -368,8 +381,16 @@ def main() -> int:
         changed = changed | missing
     print(f"取り直す出所: {sorted(changed)}")
     rebuild(changed)
-    # **取得の直前に見た公開元**を次回の基準として残す。取得後に残ったものではない
-    MANIFEST.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    # **取得の直前に見た公開元**を次回の基準として残す。取得後に残ったものではない。
+    #
+    # ⚠️ **取り直していない出所は、前回の基準のまま残す。** 索引に入っていないのに
+    # 「見た」と記録すると、その出所は**二度と取りに行かれなくなる**。実際に
+    # 2026-09-13、共有ドライブが取得対象から漏れたまま基準だけ更新され、
+    # 412ファイルが永久に取り込まれない状態になった。
+    #
+    # 「基準に載っているもの = 索引に入っているもの」を守る。
+    MANIFEST.write_text(json.dumps(with_unchanged(previous, snapshot, changed), ensure_ascii=False),
+                        encoding="utf-8")
     after = json.loads(INDEX.read_text(encoding="utf-8"))
     problems = safe_to_publish(current, after)
     if problems:
