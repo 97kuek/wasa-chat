@@ -1045,8 +1045,14 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	if slices.Contains(tools, pipeline.ToolDiscord) {
 		// **回答の前に拾う。** 索引には入っていないので、質問文で検索して
 		// 見つかった会話を材料として渡す（資料とは別の見出しで扱う）
+		// 直前の質問も渡す。「最近のは？」のような短い質問は、それ自体では
+		// 何を探すか決まらない（docs/08 M64）
+		previous := ""
+		if len(body.Context) > 0 {
+			previous = body.Context[len(body.Context)-1].Question
+		}
 		scope.DiscordLog, scope.DiscordNote, scope.DiscordSources =
-			s.searchDiscordFor(r.Context(), question, body.DiscordServer)
+			s.searchDiscordFor(r.Context(), question, previous, body.DiscordServer)
 	}
 	if err := s.pipe.RunInScope(r.Context(), question, body.Context, scope, responseMode, images, emit); err != nil {
 		log.Printf("質問の処理に失敗: %v", err)

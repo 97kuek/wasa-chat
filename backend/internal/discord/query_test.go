@@ -63,3 +63,28 @@ func TestSplitQuestionDropsHiragana(t *testing.T) {
 		t.Fatalf("区切り方が違う: %v", got)
 	}
 }
+
+// 短い質問（「最近のは？」）は指示語だけで、そのままでは当たらない語になる。
+// 前の質問のほうが具体的ならそちらを使う（2026-09-13に本番で、
+// 「荷重試験の計画書ってある？」→「最近のは？」が別の話になった）
+func TestSearchQueryForFollowUp(t *testing.T) {
+	if got := SearchQueryFor("最近のは？", "荷重試験の過去の計画書ってある？"); got != "荷重試験" {
+		t.Fatalf("前の質問を見ていない: %q", got)
+	}
+	if got := SearchQueryFor("他には？", "翼型の設計はどうやって決めた？"); got != "翼型" {
+		t.Fatalf("前の質問を見ていない: %q", got)
+	}
+	// **長い質問では前の質問を見ない。** 話題が変わったときに引きずると、
+	// 関係のない会話を根拠として渡すことになる
+	if got := SearchQueryFor("プロペラの製作手順を詳しく教えてください", "荷重試験の計画書は？"); got != "プロペラ" {
+		t.Fatalf("話題の変更を引きずっている: %q", got)
+	}
+	// 前の質問が無ければ、いままでどおり
+	if got := SearchQueryFor("翼型の設計は？", ""); got != "翼型" {
+		t.Fatalf("単独の質問が壊れた: %q", got)
+	}
+	// 短い質問でも、自分の語のほうが具体的ならそちらを使う
+	if got := SearchQueryFor("プロペラは？", "最近どう？"); got != "プロペラ" {
+		t.Fatalf("自分の語を捨てている: %q", got)
+	}
+}

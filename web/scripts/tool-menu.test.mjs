@@ -154,3 +154,11 @@ test("出典の出所とアシスタントの参照範囲を同じ型にしな�
   assert.match(api, /export type SourceOrigin = AssistantOrigin \| "drive" \| "discord"/);
   assert.match(api, /origin\?: SourceOrigin;/);
 });
+
+test("選んだだけの資料は参照に出さない", () => {
+  // 回答が「記載がありません」と言っているのに参照が並ぶ食い違いになる（2026-09-13）
+  const chat = readFileSync(new URL("../src/chat.ts", import.meta.url), "utf8");
+  assert.match(chat, /source\.used === false/);
+  // 古い履歴には used が無い。無ければ当時どおり出す
+  assert.match(api, /used\?: boolean;/);
+});

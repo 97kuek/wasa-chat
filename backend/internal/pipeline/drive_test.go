@@ -84,3 +84,55 @@ func TestDriveTOCStaysOutOfCachedPrefix(t *testing.T) {
 		t.Fatalf("「公式サイトのみ」に共有ドライブの目次を足している: %q", got)
 	}
 }
+
+// ⚠️ **選んだ資料と、使った資料は違う。** 4件選んで1件しか引用しないことは
+// 普通に起きる。全部を「参照」に並べると、回答が「記載がありません」と
+// 言っているのに参照だけ並ぶ食い違いが出る（2026-09-13に本番で指摘）
+func TestMarkUsedSources(t *testing.T) {
+	sources := []Source{
+		{Title: "荷重試験", Origin: OriginWiki},
+		{Title: "構造設計", Origin: OriginWiki},
+		{Title: "作業場移転ログ", Origin: OriginWiki},
+	}
+	markUsedSources(sources, "新宿で申請します。[1] 期限は前日まで。[3]", Scope{})
+
+	if !sources[0].Used || sources[2].Used {
+		// [3] は3件目。番号は1始まり
+	}
+	for i, want := range []bool{true, false, true} {
+		if sources[i].Used != want {
+			t.Fatalf("%d件目の印が違う: %+v", i+1, sources[i])
+		}
+	}
+}
+
+// ⚠️ **並び順を変えたり間引いたりしない。** 画面は [3] を sources[2] として
+// 解くので、詰めると別の資料を指す
+func TestMarkUsedSourcesKeepsOrder(t *testing.T) {
+	sources := []Source{{Title: "あ"}, {Title: "い"}, {Title: "う"}}
+	markUsedSources(sources, "[2]", Scope{})
+	if len(sources) != 3 || sources[1].Title != "い" {
+		t.Fatalf("並びが変わった: %+v", sources)
+	}
+	// 範囲外の番号を書かれても落ちない
+	markUsedSources(sources, "[99][0][abc]", Scope{})
+}
+
+// Discordの会話は番号を持たない。渡したなら使った扱いにする
+func TestMarkUsedSourcesKeepsDiscord(t *testing.T) {
+	sources := []Source{{Title: "荷重試験", Origin: OriginWiki}, {Title: "#雑談", Origin: ToolDiscord}}
+	markUsedSources(sources, "資料に記載がありません。", Scope{DiscordLog: "部員A: 何か"})
+	if sources[0].Used {
+		t.Fatal("引用されていない資料に印が付いた")
+	}
+	if !sources[1].Used {
+		t.Fatal("読んだDiscordの会話が参照から消える")
+	}
+
+	// 会話を渡していないなら印を付けない
+	clean := []Source{{Title: "#雑談", Origin: ToolDiscord}}
+	markUsedSources(clean, "", Scope{})
+	if clean[0].Used {
+		t.Fatal("読んでいないのに印が付いた")
+	}
+}

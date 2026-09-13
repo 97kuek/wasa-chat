@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -63,6 +64,16 @@ type Source struct {
 	// まで示すために使う。節を選び終えるまで確定しないので、pages イベントは
 	// 2回流れる（1回目は参照中の資料、2回目は節つきの確定版）。
 	Sections []string `json:"sections,omitempty"`
+	// Used は、回答が実際に根拠として挙げた資料かどうか。
+	//
+	// ⚠️ **選んだ資料と、使った資料は違う。** 4件選んで1件しか引用しないことは
+	// 普通に起きる。全部を「参照」として並べると、**回答が「記載がありません」と
+	// 言っているのに参照だけ並ぶ**という食い違いが出る（2026-09-13に本番で指摘）。
+	//
+	// ⚠️ **omitempty を付けないこと。** 使わなかったことを false として送る必要が
+	// ある。付けると「使った」と区別できない。
+	// 古い履歴にはこの項目が無いので、画面側は「無ければ使った扱い」にする
+	Used bool `json:"used"`
 }
 
 // ConversationTurn は検索と回答に渡す直近の会話。Firestoreの履歴全体を
@@ -517,7 +528,7 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 	}
 	emit(Event{Type: "status", Message: "回答を作成しています"})
 	answerStarted := time.Now()
-	_, err = p.llm.Stream(ctx, llm.Request{
+	answer, err := p.llm.Stream(ctx, llm.Request{
 		// 目次を先頭に置く。全体を見渡す問い（「最も情報が薄い分野は？」）は
 		// 選択ページの本文だけでは構造的に答えられない。キャッシュも効く
 		Cached: scopedTOC(ix, sc),
@@ -549,9 +560,41 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 	if err != nil {
 		return fmt.Errorf("回答生成: %w", err)
 	}
+	// **使った資料だけを参照に残す。** 選んだだけの資料が並ぶと、回答が
+	// 「記載がありません」と言っているのに参照が並ぶ食い違いになる
+	markUsedSources(sources, answer, sc)
+	emit(Event{Type: "pages", Pages: sources})
 	emitTiming("total", started)
 	emit(Event{Type: "done"})
 	return nil
+}
+
+// citedNumberPattern は回答本文に書かれた資料番号。
+var citedNumberPattern = regexp.MustCompile(`\[(\d+)\]`)
+
+// markUsedSources は、回答が実際に引用した資料へ印を付ける。
+//
+// ⚠️ **並び順を変えたり間引いたりしないこと。** 画面は `[3]` を
+// `sources[2]` として解くので、詰めると別の資料を指す。印だけ付ける。
+//
+// Discordの会話は番号を持たない（索引のページではないため）。読んだ時点で
+// 根拠の候補なので、渡したなら使った扱いにする。
+func markUsedSources(sources []Source, answer string, sc Scope) {
+	for _, match := range citedNumberPattern.FindAllStringSubmatch(answer, -1) {
+		number, err := strconv.Atoi(match[1])
+		if err != nil || number < 1 || number > len(sources) {
+			continue
+		}
+		sources[number-1].Used = true
+	}
+	if strings.TrimSpace(sc.DiscordLog) == "" {
+		return
+	}
+	for i := range sources {
+		if sources[i].Origin == ToolDiscord {
+			sources[i].Used = true
+		}
+	}
 }
 
 func conversationSection(history []ConversationTurn) string {

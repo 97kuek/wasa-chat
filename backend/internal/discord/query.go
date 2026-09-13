@@ -8,6 +8,13 @@ import (
 // minTermRunes はこれ未満の塊を語として使わない。1文字は当たりすぎる。
 const minTermRunes = 2
 
+// followUpRunes はこれ以下の質問を「前の話の続き」とみなす長さ。
+//
+// 「最近のは？」「他には？」のような短い質問は、**それ自体では何を探すか
+// 決まらない**。前の質問の語を使ったほうが当たる（2026-09-13に本番で、
+// 「荷重試験の計画書ってある？」→「最近のは？」が別の話になった）。
+const followUpRunes = 12
+
 // verbStems は、送り仮名の前に立つ1文字の動詞。
 //
 // 「書かれていますか」は「書」＋ひらがなに割れるので、1文字の候補として
@@ -28,6 +35,24 @@ var queryStopWords = map[string]bool{
 	"内容": true, "こと": true, "もの": true, "ため": true, "とき": true, "ところ": true,
 	"方法": true, "場合": true, "色々": true, "いろいろ": true, "全部": true,
 	"書かれて": true, "書いて": true, "あります": true, "ますか": true, "ですか": true,
+}
+
+// SearchQueryFor は、直前の質問も踏まえて検索語を選ぶ。
+//
+// 短い質問（「最近のは？」）は指示語だけで、そのまま語を取ると「最近」のような
+// 当たらない語になる。前の質問のほうが具体的ならそちらを使う。
+//
+// **長い質問では前の質問を見ない。** 話題が変わったときに引きずると、
+// 関係のない会話を根拠として渡すことになる。
+func SearchQueryFor(question, previous string) string {
+	term := SearchQuery(question)
+	if previous == "" || len([]rune(strings.TrimSpace(question))) > followUpRunes {
+		return term
+	}
+	if earlier := SearchQuery(previous); len([]rune(earlier)) > len([]rune(term)) {
+		return earlier
+	}
+	return term
 }
 
 // SearchQuery は質問から、Discordの検索に渡す語を1つ選ぶ。空なら検索しない。

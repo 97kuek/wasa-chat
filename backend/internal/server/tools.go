@@ -151,8 +151,13 @@ const MaxSearchGuilds = discord.MaxSearchGuilds
 // DISCORD_SEARCH_CHANNELS を設定すると、さらにそのチャンネルだけへ絞れる。
 // searchDiscordFor は質問に関係する会話を拾う。guildID が空なら、新しい代から
 // MaxSearchGuilds 件まで横断する。
-func (s *Server) searchDiscordFor(ctx context.Context, question, guildID string) (transcript, note string, sources []pipeline.Source) {
+func (s *Server) searchDiscordFor(ctx context.Context, question, previous, guildID string) (transcript, note string, sources []pipeline.Source) {
 	if s.cfg.DiscordBotToken == "" {
+		return "", "", nil
+	}
+	// **前の質問も見る。**「最近のは？」だけでは何を探すか決まらない
+	term := discord.SearchQueryFor(question, previous)
+	if term == "" {
 		return "", "", nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, discordSearchTimeout)
@@ -170,7 +175,7 @@ func (s *Server) searchDiscordFor(ctx context.Context, question, guildID string)
 		if len(allowed) == 0 {
 			continue
 		}
-		found, err := discord.Search(ctx, s.cfg.DiscordBotToken, guild.ID, question, allowed)
+		found, err := discord.Search(ctx, s.cfg.DiscordBotToken, guild.ID, term, allowed)
 		if err != nil {
 			// **黙って続ける。** 1つのサーバーが読めなくても、ほかは読める。
 			// 会話が拾えないことは、質問に答えられないことを意味しない
@@ -196,7 +201,7 @@ func (s *Server) searchDiscordFor(ctx context.Context, question, guildID string)
 	if strings.TrimSpace(transcript) == "" {
 		return "", "", nil
 	}
-	note = discord.SearchScopeAcross(question, servers, len(logs), discord.CountMessages(logs))
+	note = discord.SearchScopeAcross(term, servers, len(logs), discord.CountMessages(logs))
 	return transcript, note, sources
 }
 

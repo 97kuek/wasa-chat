@@ -34,7 +34,7 @@ const MaxSearchHits = 5
 // 「ボットが見える範囲」で認可されるので、そのまま使うと**ボットが入っている
 // 非公開チャンネルまで画面から読めてしまう**。画面の利用者はWikiアカウントで、
 // Discordの権限とは無関係である（docs/09 A-12）。
-func Search(ctx context.Context, botToken, guildID, query string, allowed []Channel) ([]ChannelLog, error) {
+func Search(ctx context.Context, botToken, guildID, term string, allowed []Channel) ([]ChannelLog, error) {
 	if botToken == "" {
 		return nil, ErrNoBotToken
 	}
@@ -45,9 +45,9 @@ func Search(ctx context.Context, botToken, guildID, query string, allowed []Chan
 		return nil, ErrNoPublicChannels
 	}
 	names := make(map[string]string, len(allowed))
-	// ⚠️ **質問文をそのまま渡さない。** 語の一致で探すので必ず0件になる。
+	// ⚠️ **質問文をそのまま渡さない**（呼び出し側が SearchQueryFor で語にする）。
 	// 語が取れない質問（「教えてください」だけ等）は、投げても0件なので検索しない
-	term := SearchQuery(query)
+	term = strings.TrimSpace(term)
 	if term == "" {
 		return nil, nil
 	}
@@ -162,7 +162,7 @@ func ChannelURL(guildID, channelID string) string {
 }
 
 // SearchScope は画面へ出す「何を読んだか」の説明。
-func SearchScope(query string, channels, messages int) string {
+func SearchScope(term string, channels, messages int) string {
 	return fmt.Sprintf("Discordの公開チャンネル%d件から「%s」を検索し、前後を含む%d件の発言を読みました",
-		channels, strings.TrimSpace(query), messages)
+		channels, strings.TrimSpace(term), messages)
 }

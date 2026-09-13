@@ -121,6 +121,10 @@ export function referenceItems(sources: Source[]): ReferenceItem[] {
   const seen = new Set<string>();
   const out: ReferenceItem[] = [];
   for (const source of sources) {
+    // ⚠️ **選んだだけの資料は出さない。** 回答が「記載がありません」と言って
+    // いるのに参照が並ぶ、という食い違いになる。古い履歴には used が無いので、
+    // 無ければ当時どおり出す
+    if (source.used === false) continue;
     const sections = source.sections?.length ? source.sections : [source.title];
     for (const section of sections) {
       if (!section || seen.has(section)) continue;
