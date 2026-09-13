@@ -21,11 +21,6 @@ func denyEveryone(guildID string) []struct {
 
 func choicesStub(t *testing.T) *discordStub {
 	t.Helper()
-	// 候補は1分間覚えるので、テストごとに捨てる
-	channelCacheMu.Lock()
-	channelCache = map[string]cachedChannels{}
-	channelCacheMu.Unlock()
-
 	stub := &discordStub{channels: []Channel{
 		{ID: "c1", Type: channelTypeText, Name: "機体班", Position: 0},
 		{ID: "c2", Type: channelTypeText, Name: "電装班", Position: 1},
@@ -126,14 +121,57 @@ func TestScopeChoicesCaches(t *testing.T) {
 
 // 候補が作れなくてもコマンド自体は打てる。ここで失敗を見せない
 func TestScopeChoicesSurvivesFailure(t *testing.T) {
-	channelCacheMu.Lock()
-	channelCache = map[string]cachedChannels{}
-	channelCacheMu.Unlock()
 	stub := &discordStub{} // チャンネル一覧が空 → ErrNoPublicChannels
 	stub.serve(t)
 
 	got := ScopeChoices(t.Context(), "token", "g1", "")
 	if len(got) != 1 || got[0].Value != ScopeAllChannels {
 		t.Fatalf("失敗が候補に漏れている: %+v", got)
+	}
+}
+
+// ⚠️ **実データで「全般」が11個、「進捗」が6個あった**（2026-09-13にWASA42代の
+// サーバーで確認）。そのままだと要約の見出しも補完の候補も `#全般` が並び、
+// どの班の話か分からなくなる
+func TestDuplicateChannelNamesGetCategory(t *testing.T) {
+	stub := &discordStub{channels: []Channel{
+		{ID: "cat1", Type: channelTypeCategory, Name: "駆動班"},
+		{ID: "cat2", Type: channelTypeCategory, Name: "翼班"},
+		{ID: "c1", Type: channelTypeText, Name: "全般", ParentID: "cat1", Position: 0},
+		{ID: "c2", Type: channelTypeText, Name: "全般", ParentID: "cat2", Position: 1},
+		// 重複していない名前はそのまま。全部に足すと冗長になるだけ
+		{ID: "c3", Type: channelTypeText, Name: "お知らせ", ParentID: "cat1", Position: 2},
+	}}
+	stub.serve(t)
+
+	got := ScopeChoices(t.Context(), "token", "g1", "")
+	names := make([]string, 0, len(got))
+	for _, choice := range got {
+		if choice.Value != ScopeAllChannels {
+			names = append(names, choice.Name)
+		}
+	}
+	want := []string{"#駆動班 / 全般", "#翼班 / 全般", "#お知らせ"}
+	if len(names) != len(want) {
+		t.Fatalf("候補の数が違う: %v", names)
+	}
+	for i, name := range want {
+		if names[i] != name {
+			t.Fatalf("%d件目が %q（期待 %q）: %v", i+1, names[i], name, names)
+		}
+	}
+}
+
+// カテゴリに属していないチャンネルは、重複していても足しようがない。
+// そのまま返す（落とすほうが害が大きい）
+func TestDuplicateNamesWithoutCategory(t *testing.T) {
+	stub := &discordStub{channels: []Channel{
+		{ID: "c1", Type: channelTypeText, Name: "全般", Position: 0},
+		{ID: "c2", Type: channelTypeText, Name: "全般", Position: 1},
+	}}
+	stub.serve(t)
+
+	if got := ScopeChoices(t.Context(), "token", "g1", "全般"); len(got) != 2 {
+		t.Fatalf("カテゴリが無いチャンネルを落としている: %+v", got)
 	}
 }

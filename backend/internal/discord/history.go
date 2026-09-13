@@ -86,11 +86,16 @@ func (m *Message) name() string {
 	return m.Author.Username
 }
 
+// チャンネルの種類。カテゴリ（フォルダ）は本文を持たないが、
+// **同じ名前のチャンネルを見分けるために要る**。
+const channelTypeCategory = 4
+
 // Channel はギルドのチャンネル。
 type Channel struct {
 	ID                 string `json:"id"`
 	Type               int    `json:"type"`
 	Name               string `json:"name"`
+	ParentID           string `json:"parent_id"`
 	Position           int    `json:"position"`
 	PermissionOverwrit []struct {
 		ID   string `json:"id"`
@@ -357,7 +362,13 @@ func publicChannels(ctx context.Context, f *fetcher, guildID string) ([]Channel,
 	if err := f.get(ctx, url, &channels); err != nil {
 		return nil, err
 	}
-	open := channels[:0]
+	categories := map[string]string{}
+	for _, channel := range channels {
+		if channel.Type == channelTypeCategory {
+			categories[channel.ID] = channel.Name
+		}
+	}
+	var open []Channel
 	for _, channel := range channels {
 		if channel.public(guildID) {
 			open = append(open, channel)
@@ -368,7 +379,31 @@ func publicChannels(ctx context.Context, f *fetcher, guildID string) ([]Channel,
 	if len(open) == 0 {
 		return nil, ErrNoPublicChannels
 	}
-	return open, nil
+	return qualifyNames(open, categories), nil
+}
+
+// qualifyNames は、同じ名前のチャンネルへカテゴリ名を足して見分けられるようにする。
+//
+// ⚠️ **実データで「全般」が11個、「進捗」が6個あった**（2026-09-13にWASA42代の
+// サーバーで確認）。そのままだと要約の見出しも補完の候補も `#全般` が並び、
+// **どの班の話か分からなくなる**。カテゴリを足すと「駆動班 / 全般」になる。
+//
+// 重複していない名前はそのまま。全部に足すと「班チャンネル / 機体班」のように
+// 冗長になり、読みにくくなるだけである。
+func qualifyNames(channels []Channel, categories map[string]string) []Channel {
+	count := map[string]int{}
+	for _, channel := range channels {
+		count[channel.Name]++
+	}
+	for i, channel := range channels {
+		if count[channel.Name] < 2 {
+			continue
+		}
+		if category := categories[channel.ParentID]; category != "" {
+			channels[i].Name = category + " / " + channel.Name
+		}
+	}
+	return channels
 }
 
 // fetchChannel は1チャンネルを `before` で遡って読む。新しい順で返す。

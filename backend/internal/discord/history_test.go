@@ -254,6 +254,11 @@ func (d *discordStub) serve(t *testing.T) *httptest.Server {
 	apiBase = server.URL + "/api/v10"
 	// 連投の間隔はテストでは要らない。60回待つと15秒かかる
 	requestInterval = 0
+	// **チャンネル一覧のキャッシュを捨てる。** Gather も補完と同じ一覧を使うので、
+	// 前のテストの顔ぶれが残っていると、別のサーバーを読んだことになる
+	channelCacheMu.Lock()
+	channelCache = map[string]cachedChannels{}
+	channelCacheMu.Unlock()
 	t.Cleanup(func() { apiBase, requestInterval = defaultAPIBase, 250*time.Millisecond })
 	return server
 }
@@ -462,9 +467,6 @@ func TestGatherIncludesActiveThreads(t *testing.T) {
 		},
 	}
 	stub.serve(t)
-	channelCacheMu.Lock()
-	channelCache = map[string]cachedChannels{}
-	channelCacheMu.Unlock()
 
 	got, err := Gather(t.Context(), "token", "g1", "c1", Options{Days: 7, AllChannels: true})
 	if err != nil {
