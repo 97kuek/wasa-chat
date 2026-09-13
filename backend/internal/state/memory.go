@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -233,7 +234,7 @@ func (m *Memory) GetAdminRole(_ context.Context, key string) (AdminRole, bool, e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	role, ok := m.adminRoles[key]
-	return role, ok, nil
+	return cloneAdminRole(role), ok, nil
 }
 
 func (m *Memory) ListAdminRoles(_ context.Context) ([]AdminRole, error) {
@@ -242,7 +243,7 @@ func (m *Memory) ListAdminRoles(_ context.Context) ([]AdminRole, error) {
 	list := make([]AdminRole, 0, len(m.adminRoles))
 	for key, role := range m.adminRoles {
 		role.Key = key
-		list = append(list, role)
+		list = append(list, cloneAdminRole(role))
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Username < list[j].Username })
 	return list, nil
@@ -252,7 +253,7 @@ func (m *Memory) SaveAdminRole(_ context.Context, key string, role AdminRole) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	role.Key = key
-	m.adminRoles[key] = role
+	m.adminRoles[key] = cloneAdminRole(role)
 	return nil
 }
 
@@ -269,27 +270,31 @@ func (m *Memory) LatestSourceCheck(_ context.Context) (SourceCheck, bool, error)
 	if m.sourceCheck == nil {
 		return SourceCheck{}, false, nil
 	}
-	return *m.sourceCheck, true, nil
+	return cloneSourceCheck(*m.sourceCheck), true, nil
 }
 
 func (m *Memory) SaveSourceCheck(_ context.Context, check SourceCheck) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sourceCheck = &check
+	cloned := cloneSourceCheck(check)
+	m.sourceCheck = &cloned
 	return nil
 }
 
-func (m *Memory) RecordAPIRequest(_ context.Context, day, model string, at time.Time) error {
+func (m *Memory) ReserveAPIRequest(_ context.Context, day, model string, limit int, at time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := day + "\x00" + model
+	key := usageKey(day, model)
 	item := m.apiUsage[key]
+	if limit > 0 && item.Requests >= limit {
+		return false, nil
+	}
 	item.Day = day
 	item.Model = model
 	item.Requests++
 	item.UpdatedAt = at
 	m.apiUsage[key] = item
-	return nil
+	return true, nil
 }
 
 func (m *Memory) ListAPIUsage(_ context.Context, day string) ([]APIUsage, error) {
@@ -310,7 +315,7 @@ func (m *Memory) ListChats(_ context.Context, user string, limit int) ([]Chat, e
 	defer m.mu.Unlock()
 	var chats []Chat
 	for _, chat := range m.chats[user] {
-		chats = append(chats, chat)
+		chats = append(chats, cloneChat(chat))
 	}
 	sort.Slice(chats, func(i, j int) bool { return chats[i].UpdatedAt > chats[j].UpdatedAt })
 	if len(chats) > limit {
@@ -325,7 +330,7 @@ func (m *Memory) SaveChat(_ context.Context, user string, chat Chat, limit int) 
 	if m.chats[user] == nil {
 		m.chats[user] = map[string]Chat{}
 	}
-	m.chats[user][chat.ID] = chat
+	m.chats[user][chat.ID] = cloneChat(chat)
 	if len(m.chats[user]) <= limit {
 		return nil
 	}
@@ -350,7 +355,7 @@ func (m *Memory) DeleteChat(_ context.Context, user, chatID string) error {
 func (m *Memory) SaveFeedback(_ context.Context, feedback Feedback) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.feedback[feedback.ID] = feedback
+	m.feedback[feedback.ID] = cloneFeedback(feedback)
 	return nil
 }
 
@@ -373,7 +378,7 @@ func (m *Memory) ListFeedback(_ context.Context, limit int) ([]Feedback, error) 
 	defer m.mu.Unlock()
 	list := make([]Feedback, 0, len(m.feedback))
 	for _, item := range m.feedback {
-		list = append(list, item)
+		list = append(list, cloneFeedback(item))
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].SubmittedAt > list[j].SubmittedAt })
 	if limit > 0 && len(list) > limit {
@@ -387,7 +392,7 @@ func (m *Memory) ListAssistants(_ context.Context) ([]Assistant, error) {
 	defer m.mu.Unlock()
 	list := make([]Assistant, 0, len(m.assistants))
 	for _, item := range m.assistants {
-		list = append(list, item)
+		list = append(list, cloneAssistant(item))
 	}
 	// 作成順に並べる。人気順や利用回数での並べ替えは、数が増えて
 	// 探しづらくなってから足す（いまは10件程度を想定している）
@@ -399,7 +404,7 @@ func (m *Memory) ListAssistants(_ context.Context) ([]Assistant, error) {
 func (m *Memory) SaveAssistant(_ context.Context, assistant Assistant) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.assistants[assistant.ID] = assistant
+	m.assistants[assistant.ID] = cloneAssistant(assistant)
 	return nil
 }
 
@@ -410,14 +415,17 @@ func (m *Memory) CreateAssistant(_ context.Context, assistant Assistant) error {
 	if _, exists := m.assistants[assistant.ID]; exists {
 		return ErrAssistantExists
 	}
-	m.assistants[assistant.ID] = assistant
+	m.assistants[assistant.ID] = cloneAssistant(assistant)
 	return nil
 }
 
 func (m *Memory) UpdateAssistant(_ context.Context, assistant Assistant) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.assistants[assistant.ID] = assistant
+	if _, exists := m.assistants[assistant.ID]; !exists {
+		return ErrAssistantNotFound
+	}
+	m.assistants[assistant.ID] = cloneAssistant(assistant)
 	return nil
 }
 
@@ -426,4 +434,49 @@ func (m *Memory) DeleteAssistant(_ context.Context, id string) error {
 	defer m.mu.Unlock()
 	delete(m.assistants, id)
 	return nil
+}
+
+// Firestoreは直列化を挟むため、保存値と呼び出し側の可変なスライスは共有されない。
+// Memoryでも同じ性質を保ち、テストと本番で後から値が変わる条件を揃える。
+func cloneAdminRole(role AdminRole) AdminRole {
+	role.Tools = slices.Clone(role.Tools)
+	return role
+}
+
+func cloneSourceCheck(check SourceCheck) SourceCheck {
+	check.Deltas = slices.Clone(check.Deltas)
+	for i := range check.Deltas {
+		check.Deltas[i].Added = slices.Clone(check.Deltas[i].Added)
+		check.Deltas[i].Updated = slices.Clone(check.Deltas[i].Updated)
+		check.Deltas[i].Removed = slices.Clone(check.Deltas[i].Removed)
+	}
+	return check
+}
+
+func cloneChat(chat Chat) Chat {
+	chat.Turns = slices.Clone(chat.Turns)
+	for i := range chat.Turns {
+		chat.Turns[i].Sources = slices.Clone(chat.Turns[i].Sources)
+		chat.Turns[i].FeedbackReasons = slices.Clone(chat.Turns[i].FeedbackReasons)
+		if chat.Turns[i].Timings != nil {
+			timings := *chat.Turns[i].Timings
+			chat.Turns[i].Timings = &timings
+		}
+	}
+	return chat
+}
+
+func cloneFeedback(feedback Feedback) Feedback {
+	feedback.Reasons = slices.Clone(feedback.Reasons)
+	feedback.Sources = slices.Clone(feedback.Sources)
+	if feedback.Timings != nil {
+		timings := *feedback.Timings
+		feedback.Timings = &timings
+	}
+	return feedback
+}
+
+func cloneAssistant(assistant Assistant) Assistant {
+	assistant.Glossary = slices.Clone(assistant.Glossary)
+	return assistant
 }

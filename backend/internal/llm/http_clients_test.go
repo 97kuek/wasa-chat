@@ -26,13 +26,16 @@ func geminiHTTPResponse(status int, body string) *http.Response {
 
 func TestGeminiRetriesTemporaryFailure(t *testing.T) {
 	var calls atomic.Int32
-	var observed atomic.Int32
+	var reserved atomic.Int32
 	g := NewGeminiProfiles("test-key", ModelProfiles{Default: "test-model"}, 0, 1)
-	g.SetAttemptObserver(func(_ context.Context, attempt APIAttempt) {
-		if attempt.Model != "test-model" || attempt.Method != "generateContent" {
-			t.Errorf("送信通知の内容が不正: %+v", attempt)
+	// **再試行も1回として数える。** 無料枠のRPDは質問数ではなく送信回数で減る。
+	// 判定と加算は同じ場所（この判定）で行うので、ここを数えれば消費と一致する
+	g.SetAttemptGuard(func(_ context.Context, model string) error {
+		if model != "test-model" {
+			t.Errorf("判定へ渡るモデル名が不正: %q", model)
 		}
-		observed.Add(1)
+		reserved.Add(1)
+		return nil
 	})
 	g.http = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		if calls.Add(1) == 1 {
@@ -48,8 +51,8 @@ func TestGeminiRetriesTemporaryFailure(t *testing.T) {
 	if err != nil || got != "再試行成功" || calls.Load() != 2 {
 		t.Fatalf("503後に1回だけ再試行できていない: got=%q calls=%d err=%v", got, calls.Load(), err)
 	}
-	if observed.Load() != 2 {
-		t.Fatalf("再試行を含む実送信回数を通知していない: %d", observed.Load())
+	if reserved.Load() != 2 {
+		t.Fatalf("再試行を含む実送信回数を数えていない: %d", reserved.Load())
 	}
 }
 

@@ -269,7 +269,9 @@ type Store interface {
 	DeleteAdminRole(context.Context, string) error
 	LatestSourceCheck(context.Context) (SourceCheck, bool, error)
 	SaveSourceCheck(context.Context, SourceCheck) error
-	RecordAPIRequest(context.Context, string, string, time.Time) error
+	// ReserveAPIRequest はモデル別の日次枠を1回分、上限を超えない場合だけ確保する。
+	// 複数のCloud Runインスタンスから同時に呼ばれても判定と加算を原子的に行う。
+	ReserveAPIRequest(context.Context, string, string, int, time.Time) (bool, error)
 	ListAPIUsage(context.Context, string) ([]APIUsage, error)
 	ListChats(context.Context, string, int) ([]Chat, error)
 	SaveChat(context.Context, string, Chat, int) error
@@ -295,5 +297,9 @@ type Store interface {
 	DeleteAssistant(context.Context, string) error
 }
 
-// ErrAssistantExists は、既に使われているIDで作成しようとしたことを表す。
-var ErrAssistantExists = errors.New("そのIDは既に使われています")
+var (
+	// ErrAssistantExists は、既に使われているIDで作成しようとしたことを表す。
+	ErrAssistantExists = errors.New("そのIDは既に使われています")
+	// ErrAssistantNotFound は、削除済みのアシスタントを更新しようとしたことを表す。
+	ErrAssistantNotFound = errors.New("アシスタントが見つかりません")
+)

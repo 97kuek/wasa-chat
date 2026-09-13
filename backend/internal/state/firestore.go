@@ -368,12 +368,46 @@ func apiUsageID(model string) string {
 	return hex.EncodeToString(sum[:12])
 }
 
-func (f *Firestore) RecordAPIRequest(ctx context.Context, day, model string, at time.Time) error {
-	ref := f.client.Collection("api_usage").Doc(day).Collection("models").Doc(apiUsageID(model))
-	_, err := ref.Set(ctx, map[string]any{
-		"day": day, "model": model, "requests": firestore.Increment(1), "updated_at": at,
-	}, firestore.MergeAll)
-	return err
+func (f *Firestore) apiUsageDoc(day, model string) *firestore.DocumentRef {
+	return f.client.Collection("api_usage").Doc(day).Collection("models").Doc(apiUsageID(model))
+}
+
+func apiRequestsFromSnapshot(snapshot *firestore.DocumentSnapshot) int {
+	value, err := snapshot.DataAt("requests")
+	if err != nil {
+		return 0
+	}
+	switch requests := value.(type) {
+	case int64:
+		return int(requests)
+	case int:
+		return requests
+	default:
+		return 0
+	}
+}
+
+func (f *Firestore) ReserveAPIRequest(ctx context.Context, day, model string, limit int, at time.Time) (bool, error) {
+	ref := f.apiUsageDoc(day, model)
+	reserved := false
+	err := f.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		reserved = false
+		requests := 0
+		snapshot, err := tx.Get(ref)
+		if err == nil {
+			requests = apiRequestsFromSnapshot(snapshot)
+		} else if status.Code(err) != codes.NotFound {
+			return err
+		}
+		if limit > 0 && requests >= limit {
+			return nil
+		}
+		reserved = true
+		return tx.Set(ref, map[string]any{
+			"day": day, "model": model, "requests": requests + 1, "updated_at": at,
+		})
+	})
+	return reserved, err
 }
 
 func (f *Firestore) ListAPIUsage(ctx context.Context, day string) ([]APIUsage, error) {
@@ -535,8 +569,16 @@ func (f *Firestore) CreateAssistant(ctx context.Context, assistant Assistant) er
 }
 
 func (f *Firestore) UpdateAssistant(ctx context.Context, assistant Assistant) error {
-	_, err := f.assistantCollection().Doc(assistant.ID).Set(ctx, assistant)
-	return err
+	ref := f.assistantCollection().Doc(assistant.ID)
+	return f.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		if _, err := tx.Get(ref); status.Code(err) == codes.NotFound {
+			return ErrAssistantNotFound
+		} else if err != nil {
+			return err
+		}
+		// 読み取り後の削除とも競合検出されるため、削除済み設定を復活させない。
+		return tx.Set(ref, assistant)
+	})
 }
 
 func (f *Firestore) DeleteAssistant(ctx context.Context, id string) error {

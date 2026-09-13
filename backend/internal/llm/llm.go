@@ -17,18 +17,15 @@ type WaitInfo struct {
 	Until  time.Time
 }
 
-// APIAttempt は実際に上流へ送ったHTTPリクエスト。再試行も1件ずつ通知する。
-// 無料枠のRPDは質問数ではなくこの回数で減るため、管理画面の残量推定に使う。
-type APIAttempt struct {
-	At     time.Time
-	Model  string
-	Method string
-}
-
-type APIAttemptObserver func(context.Context, APIAttempt)
-
-// APIAttemptGuard は送信の直前に呼ばれ、送ってよければ nil を返す。
-// **数えるだけでは枠は守れない**ので、止められる場所をここに用意する。
+// APIAttemptGuard は上流へ送る直前に、1回ぶんの枠を確保しにいく。
+//
+// ⚠️ **数えるのと止めるのを分けない。** 以前は「送った回数を後から数える
+// 通知」と「送ってよいか問う判定」が別々にあり、数えた結果を読んでから
+// 判定するまでの間に他のインスタンスが送れた。確保できたら送る、という
+// 1つの操作にまとめてある（保存先が原子的に行う。state.ReserveAPIRequest）。
+//
+// **再試行も1回として数える。** 無料枠のRPDは質問数ではなく送信回数で減り、
+// 1回の質問で2〜3回送る。
 type APIAttemptGuard func(ctx context.Context, model string) error
 
 // RuntimeStatus は管理画面へ公開してよい上流の状態だけを表す。

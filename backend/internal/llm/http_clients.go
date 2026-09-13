@@ -35,7 +35,6 @@ type Gemini struct {
 	minInterval  time.Duration
 	maxRetries   int
 	statusMu     sync.RWMutex
-	observer     APIAttemptObserver
 	// allow は送信してよいかを問う。nil なら常に送る。
 	// **数えるだけでは枠は守れない。** 送る前に止められる場所がここしかない
 	allow APIAttemptGuard
@@ -114,14 +113,6 @@ func (g *Gemini) SetAttemptGuard(guard APIAttemptGuard) {
 	g.statusMu.Unlock()
 }
 
-// SetAttemptObserver は起動時に1度だけ設定する。秘密値を渡さず、
-// モデル名・方式・送信時刻だけで無料枠の消費を数える。
-func (g *Gemini) SetAttemptObserver(observer APIAttemptObserver) {
-	g.statusMu.Lock()
-	g.observer = observer
-	g.statusMu.Unlock()
-}
-
 func (g *Gemini) blocked() (time.Time, error) {
 	g.statusMu.RLock()
 	defer g.statusMu.RUnlock()
@@ -148,15 +139,6 @@ func (g *Gemini) permit(ctx context.Context, model string) error {
 		return nil
 	}
 	return allow(ctx, model)
-}
-
-func (g *Gemini) observeAttempt(ctx context.Context, attempt APIAttempt) {
-	g.statusMu.RLock()
-	observer := g.observer
-	g.statusMu.RUnlock()
-	if observer != nil {
-		observer(ctx, attempt)
-	}
 }
 
 func (g *Gemini) RuntimeStatus() RuntimeStatus {
@@ -423,7 +405,6 @@ func (g *Gemini) do(ctx context.Context, model, method string, body map[string]a
 		if err := g.permit(ctx, model); err != nil {
 			return nil, err
 		}
-		g.observeAttempt(ctx, APIAttempt{At: time.Now().UTC(), Model: model, Method: method})
 		resp, err := g.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {

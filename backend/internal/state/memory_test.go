@@ -2,7 +2,9 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -95,8 +97,9 @@ func TestMemoryCountsActualAPIRequestsAndPurgesAuditLogs(t *testing.T) {
 	store := NewMemory()
 	now := time.Now().UTC()
 	for range 3 {
-		if err := store.RecordAPIRequest(ctx, "2026-08-11", "gemini-test", now); err != nil {
-			t.Fatal(err)
+		reserved, err := store.ReserveAPIRequest(ctx, "2026-08-11", "gemini-test", 500, now)
+		if err != nil || !reserved {
+			t.Fatalf("API試行を予約できない: reserved=%v err=%v", reserved, err)
 		}
 	}
 	usage, _ := store.ListAPIUsage(ctx, "2026-08-11")
@@ -181,5 +184,73 @@ func TestMemoryListsAllFeedbackWhenLimitIsZero(t *testing.T) {
 	items, err := store.ListFeedback(ctx, 0)
 	if err != nil || len(items) != 3 {
 		t.Fatalf("全件を書き出せない: count=%d err=%v", len(items), err)
+	}
+}
+
+// Firestoreは保存時と読出時に値を直列化するため、呼び出し側のスライスとは
+// 共有されない。Memoryも同じ振る舞いでなければ、テストだけ権限が後から変わる。
+func TestMemoryDoesNotShareAdminRoleSlices(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemory()
+	role := AdminRole{Username: "利用者", Tools: []string{"drive"}}
+	if err := store.SaveAdminRole(ctx, "key", role); err != nil {
+		t.Fatal(err)
+	}
+
+	role.Tools[0] = "書換済み"
+	saved, ok, err := store.GetAdminRole(ctx, "key")
+	if err != nil || !ok || len(saved.Tools) != 1 || saved.Tools[0] != "drive" {
+		t.Fatalf("保存後の入力変更が内部状態へ漏れた: ok=%v role=%+v err=%v", ok, saved, err)
+	}
+
+	saved.Tools[0] = "再書換済み"
+	again, _, _ := store.GetAdminRole(ctx, "key")
+	if len(again.Tools) != 1 || again.Tools[0] != "drive" {
+		t.Fatalf("読出値の変更が内部状態へ漏れた: %+v", again)
+	}
+}
+
+func TestMemoryReservesAPIRequestsAtomically(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemory()
+	const limit = 5
+	const workers = 50
+
+	var wg sync.WaitGroup
+	accepted := make(chan bool, workers)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, err := store.ReserveAPIRequest(ctx, "2026-09-13", "gemini-test", limit, time.Now().UTC())
+			if err != nil {
+				t.Errorf("予約に失敗: %v", err)
+			}
+			accepted <- ok
+		}()
+	}
+	wg.Wait()
+	close(accepted)
+
+	count := 0
+	for ok := range accepted {
+		if ok {
+			count++
+		}
+	}
+	if count != limit {
+		t.Fatalf("上限を原子的に守れていない: accepted=%d want=%d", count, limit)
+	}
+	usage, err := store.ListAPIUsage(ctx, "2026-09-13")
+	if err != nil || len(usage) != 1 || usage[0].Requests != limit {
+		t.Fatalf("予約数の記録が不正: usage=%+v err=%v", usage, err)
+	}
+}
+
+func TestMemoryUpdateAssistantRequiresExistingAssistant(t *testing.T) {
+	store := NewMemory()
+	err := store.UpdateAssistant(context.Background(), Assistant{ID: "missing", Name: "存在しない"})
+	if !errors.Is(err, ErrAssistantNotFound) {
+		t.Fatalf("存在しないアシスタントを新規作成した: %v", err)
 	}
 }

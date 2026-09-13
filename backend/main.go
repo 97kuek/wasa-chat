@@ -288,35 +288,27 @@ func main() {
 		// 上限に達しても止まるのは「429が返ってから」だった。日次上限の429は待っても
 		// 回復しない（太平洋時間0時まで）ので、そこまで全部の質問が失敗し続ける。
 		//
-		// 数え方は「実際にGeminiへ送った回数」で、質問数ではない。1質問で2〜3回送る。
-		// 記録が読めないときは**通す**。数えられないことを理由に全部止めると、
+		// 数え方は送信直前のAPI試行回数で、質問数ではない。1質問で2〜3回送る。
+		// 複数インスタンスでも超過しないよう、判定と加算は保存先の一操作にする。
+		// 予約できないときは**通す**。数えられないことを理由に全部止めると、
 		// Firestoreの一時的な不調で丸一日使えなくなる
+		//
+		// ⚠️ **上限なし（0以下）でも数えるところは通す。** ここで早く返すと、
+		// 管理画面の利用回数が空になる。ReserveAPIRequest は上限0を
+		// 「止めないが数える」として扱う
 		geminiClient.SetAttemptGuard(func(ctx context.Context, model string) error {
-			if rpdLimit <= 0 {
-				return nil
-			}
-			day := pacificDay(time.Now().UTC())
-			usage, err := sharedState.ListAPIUsage(ctx, day)
+			now := time.Now().UTC()
+			day := pacificDay(now)
+			reserved, err := sharedState.ReserveAPIRequest(ctx, day, model, rpdLimit, now)
 			if err != nil {
-				log.Printf("Gemini利用回数を読めません（送信は通します）: %v", err)
+				log.Printf("Gemini利用回数を予約できません（送信は通します）: %v", err)
 				return nil
 			}
-			for _, row := range usage {
-				if row.Model == model && row.Requests >= rpdLimit {
-					return fmt.Errorf("%w（%s は本日%d回に達しました）",
-						llm.ErrQuotaGuard, model, row.Requests)
-				}
+			if !reserved {
+				return fmt.Errorf("%w（%s は本日%d回に達しました）",
+					llm.ErrQuotaGuard, model, rpdLimit)
 			}
 			return nil
-		})
-		geminiClient.SetAttemptObserver(func(_ context.Context, attempt llm.APIAttempt) {
-			// 利用者の接続が切れても、すでにGeminiへ送った1回は無料枠から減る。
-			// 元リクエストのcontextから切り離し、短い上限だけ付けて確実に数える。
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			if err := sharedState.RecordAPIRequest(ctx, pacificDay(attempt.At), attempt.Model, attempt.At); err != nil {
-				log.Printf("Gemini利用回数の記録に失敗: %v", err)
-			}
 		})
 	}
 
