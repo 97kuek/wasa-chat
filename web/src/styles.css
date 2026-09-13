@@ -669,6 +669,13 @@ select:focus-visible {
   min-width: 0;
   height: 100dvh;
   display: grid;
+  /* ⚠️ **列を必ず書く。** 書かないと暗黙の列が `auto` になり、**いちばん縮まない
+     子の最小幅まで広がる**。実測（2026-09-13、実アプリを393pxで測定）では、
+     ヘッダーが縮めないせいで列が412.6pxになり、ヘッダー・会話・入力欄が
+     揃って画面より20px広くなっていた。body は overflow:hidden なので横スクロールは
+     出ず、**右端が黙って切れる**（お知らせと連携メニューが切れて見えた正体）。
+     320pxでは58px、768pxでも21px広がっていた。minmax(0,1fr) で列を画面幅に固定する */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--surface);
 
@@ -1216,14 +1223,23 @@ select:focus-visible {
   gap: 6px;
 }
 
+/* ⚠️ **縮むのは文言のほう。** ボタンは 32px と書いてあっても `flex: 0 1 auto`
+   で潰れ、実測（2026-09-13、320px）では**19px幅**になっていた。押しどころが
+   狭くなるうえ、絵文字が切れて何のボタンか分からない。文言側を折り返させる */
 .answer-feedback-row > span {
+  min-width: 0;
   margin-right: 2px;
 }
+
+.answer-feedback-row button { flex: none; }
 
 .answer-feedback-row small {
   margin-left: 6px;
   color: var(--muted);
-  font-size: 9px;
+  /* ⚠️ **9pxは読めない。** ここは「押すと質問と回答も一緒に送られる」という
+     同意に関わる注意書きで、小さくして目立たなくしてよい種類の文ではない
+     （2026-09-13の実測で、画面内で最小の文字だった） */
+  font-size: 11px;
   font-weight: 400;
 }
 
