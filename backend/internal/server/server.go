@@ -103,6 +103,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/overview", s.requireAdmin(s.handleAdminOverview))
 	mux.HandleFunc("POST /api/admin/roles", s.requireOwner(s.handleAdminRole))
 	mux.HandleFunc("POST /api/admin/source-check", s.requireAdmin(s.handleSourceCheck))
+	mux.HandleFunc("GET /api/tools", s.requireAuth(s.handleTools))
 	mux.HandleFunc("GET /api/assistants", s.requireAuth(s.handleListAssistants))
 	mux.HandleFunc("POST /api/assistants", s.requireAuth(s.handleCreateAssistant))
 	mux.HandleFunc("PUT /api/assistants/{id}", s.requireAuth(s.handleUpdateAssistant))
@@ -902,6 +903,9 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		Context      []pipeline.ConversationTurn `json:"context"`
 		// data URI の配列。画面側が長辺768pxのJPEGへ落としてから送る
 		Attachments []string `json:"attachments"`
+		// Tools は入力欄の「+」で足した参照先。引き継ぎ資料は常に読むので
+		// ここには入らない（**足す**ものだけ）
+		Tools []string `json:"tools"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAskBodyBytes)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "リクエストが不正です"})
@@ -1016,7 +1020,11 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	if err := s.pipe.RunWithImages(r.Context(), question, body.Context, selected, responseMode, images, emit); err != nil {
+	// ⚠️ **実効範囲はサーバーが決める。** 画面から届いた参照先は「足す」指定で、
+	// アシスタントの参照範囲（狭める指定）と合成した結果だけが使われる。
+	// 画面の指定をそのまま信じると、範囲外の資料が読まれる（2026-09-13のCodex）
+	scope := pipeline.NewScope(selected, s.allowedTools(body.Tools))
+	if err := s.pipe.RunInScope(r.Context(), question, body.Context, scope, responseMode, images, emit); err != nil {
 		log.Printf("質問の処理に失敗: %v", err)
 		message := "回答の生成に失敗しました"
 		code := ""

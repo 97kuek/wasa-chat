@@ -249,12 +249,40 @@ const answerPrompt = `# タスク
 // **回答本文だけが範囲外のページ名やリード文を目次から拾える**。
 // 回答プロンプトが「目次を根拠に答えてよい」と明記しているため、ここは
 // 表示（「公式サイトのみ（部外に出せる情報だけ）」）と食い違う穴になる。
-func scopedTOC(ix *index.Index, a *state.Assistant) string {
-	if a == nil || a.Origin != "site" {
+func scopedTOC(ix *index.Index, sc Scope) string {
+	if sc.Assistant == nil || sc.Assistant.Origin != "site" {
 		return ix.TOC
 	}
 	// 空になるのは目次の見出しが変わったとき。全体を渡すより目次なしを選ぶ
 	return ix.SiteTOC
+}
+
+// Scope は1回の質問で読んでよい資料の範囲。
+//
+// **2つの向きが混ざる場所である。**
+//
+//   - Assistant は範囲を**狭める**（アシスタントの参照範囲。docs/09 D-5）
+//   - Drive は既定で読まないものを**足す**（入力欄の「+」）
+//
+// 実効範囲は「アシスタントが許す最大範囲 ∩ この会話で足した参照先」になる。
+// **画面の指定だけを信じない。** 足すほうもここで判定するので、クライアントが
+// 何を送ってきても、アシスタントの範囲外は読まれない（2026-09-13のCodex）。
+type Scope struct {
+	Assistant *state.Assistant
+	// Drive は共有ドライブを読むか。「+」でオンにしたときだけ true
+	Drive bool
+}
+
+// NewScope は画面から届いたツール名を、読んでよい範囲へ落とす。
+// 知らない名前は黙って捨てる（増えたときに古い画面が壊れないように）。
+func NewScope(assistant *state.Assistant, tools []string) Scope {
+	scope := Scope{Assistant: assistant}
+	for _, tool := range tools {
+		if tool == ToolDrive {
+			scope.Drive = true
+		}
+	}
+	return scope
 }
 
 // inScope はアシスタントの参照範囲にページが入るかを返す。
@@ -262,13 +290,24 @@ func scopedTOC(ix *index.Index, a *state.Assistant) string {
 // **判定をモデルに任せない。** プロンプトで「公式サイトだけ見て」と頼む方式は、
 // 書き忘れや無視で部内資料が混ざる。ここで落とせば構造的に混ざらない。
 // 絞り込みは狭める方向しか無いので、範囲外を弾くだけで足りる。
-func inScope(pg *index.Page, a *state.Assistant) bool {
-	if a == nil {
-		return true
-	}
+func inScope(pg *index.Page, sc Scope) bool {
 	origin := pg.Source
 	if origin == "" {
-		origin = "wiki" // 旧い index.json には source が無い
+		origin = OriginWiki // 旧い index.json には source が無い
+	}
+	// ⚠️ **共有ドライブは既定で読まない。**「+」でオンにした会話だけ。
+	// ここで落とすので、プロンプトの書き方に関係なく混ざらない
+	if origin == OriginDrive && !sc.Drive {
+		return false
+	}
+	// **知らない出所は読まない。** 索引に新しい出所が入ったとき、
+	// どこにも許可を書かないまま回答へ混ざるのを防ぐ
+	if !KnownOrigin(origin) {
+		return false
+	}
+	a := sc.Assistant
+	if a == nil {
+		return true
 	}
 	if a.Origin != "" && a.Origin != origin {
 		return false
@@ -278,6 +317,20 @@ func inScope(pg *index.Page, a *state.Assistant) bool {
 		return false
 	}
 	return true
+}
+
+// driveTOCSection は、共有ドライブをオンにした会話でだけ目次を足す。
+//
+// アシスタントが参照範囲を絞っているなら足さない。**足すより狭めるほうが強い**
+// （実効範囲 = アシスタントが許す最大範囲 ∩ この会話で足した参照先）。
+func driveTOCSection(ix *index.Index, sc Scope) string {
+	if !sc.Drive || ix.DriveTOC == "" {
+		return ""
+	}
+	if a := sc.Assistant; a != nil && a.Origin != "" && a.Origin != OriginDrive {
+		return ""
+	}
+	return ix.DriveTOC + "\n\n"
 }
 
 // Run は質問に答え、進行状況を emit に流す。assistant は未選択なら nil。
@@ -290,15 +343,21 @@ func (p *Pipeline) Run(ctx context.Context, question string, history []Conversat
 // **画像は回答段だけに渡す。** ページ選択は目次からタイトルを選ぶ仕事で、
 // 画像を見せても働かないうえ、全段へ渡すと入力費用が3回ぶん乗る（docs/04）。
 func (p *Pipeline) RunWithImages(ctx context.Context, question string, history []ConversationTurn, assistant *state.Assistant, requested ResponseMode, images []llm.Image, emit func(Event)) error {
-	return p.run(ctx, question, history, assistant, requested, images, emit)
+	return p.run(ctx, question, history, Scope{Assistant: assistant}, requested, images, emit)
 }
 
 // RunWithMode は質問の種類と利用者の指定から、段階ごとの能力を決めて回答する。
 func (p *Pipeline) RunWithMode(ctx context.Context, question string, history []ConversationTurn, assistant *state.Assistant, requested ResponseMode, emit func(Event)) error {
-	return p.run(ctx, question, history, assistant, requested, nil, emit)
+	return p.run(ctx, question, history, Scope{Assistant: assistant}, requested, nil, emit)
 }
 
-func (p *Pipeline) run(ctx context.Context, question string, history []ConversationTurn, assistant *state.Assistant, requested ResponseMode, images []llm.Image, emit func(Event)) error {
+// RunInScope は参照先（入力欄の「+」）を指定して回答する。
+func (p *Pipeline) RunInScope(ctx context.Context, question string, history []ConversationTurn, scope Scope, requested ResponseMode, images []llm.Image, emit func(Event)) error {
+	return p.run(ctx, question, history, scope, requested, images, emit)
+}
+
+func (p *Pipeline) run(ctx context.Context, question string, history []ConversationTurn, sc Scope, requested ResponseMode, images []llm.Image, emit func(Event)) error {
+	assistant := sc.Assistant
 	started := time.Now()
 	// **索引はここで1回だけ取る。** 途中で読み直すと、ページを選んだ索引と
 	// 節を読む索引が食い違い、選んだはずの節と別の本文を渡すことになる
@@ -330,14 +389,14 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 
 	searchQuestion := contextualQuestion(question, history)
 	pageStarted := time.Now()
-	pages, err := p.selectPages(ctx, ix, searchQuestion, assistant, selectionProfile, onWait)
+	pages, err := p.selectPages(ctx, ix, searchQuestion, sc, selectionProfile, onWait)
 	if err != nil {
 		return fmt.Errorf("ページ選択: %w", err)
 	}
 	if len(pages) == 0 {
 		// M2b で、モデルが空文字列のタイトルを3件返して照合で全滅し、
 		// 文脈ゼロになった事例があった。字面一致で拾い直す保険。
-		pages = fallbackPages(ix, searchQuestion, assistant)
+		pages = fallbackPages(ix, searchQuestion, sc)
 	}
 	emitTiming("pages", pageStarted)
 	if len(pages) == 0 {
@@ -419,7 +478,7 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 	_, err = p.llm.Stream(ctx, llm.Request{
 		// 目次を先頭に置く。全体を見渡す問い（「最も情報が薄い分野は？」）は
 		// 選択ページの本文だけでは構造的に答えられない。キャッシュも効く
-		Cached: scopedTOC(ix, assistant),
+		Cached: scopedTOC(ix, sc),
 		// 利用者が書いた指示は Prompt に入る。それを上書きさせない規則は
 		// system 側へ回す（assistant.Guard のコメント参照）
 		System: assistantpkg.SystemGuard(assistant),
@@ -427,7 +486,11 @@ func (p *Pipeline) run(ctx context.Context, question string, history []Conversat
 		// 基準日が無いと、最終更新2026-04の資料を「2年前」と述べる誤りが起きる
 		// アシスタントの指示は**資料の後・質問の前**に置く。変更させない
 		// 規則は、文章の並び順ではなく立場の違うsystemへ渡している。
-		Prompt: fmt.Sprintf(answerPrompt,
+		// ⚠️ **共有ドライブの目次は Cached に入れない。** Cached は毎回同じ
+		// バイト列であることでキャッシュが効く。Driveのファイルが1つ増減する
+		// たびに変わると、**34,688字ぶんのキャッシュが毎回外れる**
+		// （2026-09-13のCodex指摘）。可変部であるここに置く
+		Prompt: driveTOCSection(ix, sc) + fmt.Sprintf(answerPrompt,
 			time.Now().In(jst).Format("2006年1月2日"),
 			strings.Join(blocks, "\n\n---\n\n"),
 			assistantpkg.PromptSection(assistant),
@@ -473,17 +536,17 @@ func contextualQuestion(question string, history []ConversationTurn) string {
 	return conversationSection(history) + "# 現在の質問\n\n" + question
 }
 
-func (p *Pipeline) selectPages(ctx context.Context, ix *index.Index, question string, a *state.Assistant, profile llm.Profile, onWait func(llm.WaitInfo)) ([]*index.Page, error) {
+func (p *Pipeline) selectPages(ctx context.Context, ix *index.Index, question string, sc Scope, profile llm.Profile, onWait func(llm.WaitInfo)) ([]*index.Page, error) {
 	// 区分だけを絞る場合は全体目次を保ち、アシスタントごとのキャッシュ分裂を防ぐ。
 	// ただし「公式サイトのみ」は公開範囲の境界なので、scopedTOCで限定用目次へ
 	// 差し替える。どちらの場合もページ自体の除外は下のinScopeで決定的に行う。
 	scopeHint := ""
-	if scope := assistantpkg.ScopeLabel(a); scope != "" {
+	if scope := assistantpkg.ScopeLabel(sc.Assistant); scope != "" {
 		scopeHint = fmt.Sprintf(
 			"\n**このアシスタントは「%s」しか参照できません。範囲外のページを選んでも捨てられます。**\n", scope)
 	}
 	raw, err := p.llm.Complete(ctx, llm.Request{
-		Cached:    scopedTOC(ix, a), // 目次は必ず先頭固定。キャッシュが効く条件
+		Cached:    scopedTOC(ix, sc), // 目次は必ず先頭固定。キャッシュが効く条件
 		Prompt:    selectPrompt + question + scopeHint,
 		Schema:    selectSchema,
 		MaxTokens: 300,
@@ -504,7 +567,7 @@ func (p *Pipeline) selectPages(ctx context.Context, ix *index.Index, question st
 	var pages []*index.Page
 	seen := map[string]bool{}
 	add := func(pg *index.Page) {
-		if pg == nil || seen[pg.Title] || !inScope(pg, a) || !questionAllowsOrigin(question, pg) || len(pages) == maxPages {
+		if pg == nil || seen[pg.Title] || !inScope(pg, sc) || !questionAllowsOrigin(question, pg) || len(pages) == maxPages {
 			return
 		}
 		seen[pg.Title] = true
@@ -513,7 +576,7 @@ func (p *Pipeline) selectPages(ctx context.Context, ix *index.Index, question st
 
 	// LLMがもっともらしい別ページを返しても、本文の型番一致と質問中の実在タイトルは
 	// 捨てない。決定的候補は2件までとし、質問全体を見るLLMにも必ず2枠残す。
-	for _, pg := range deterministicPages(ix, question, a) {
+	for _, pg := range deterministicPages(ix, question, sc) {
 		add(pg)
 	}
 	for _, title := range out.Titles {
@@ -534,10 +597,10 @@ func (p *Pipeline) selectPages(ctx context.Context, ix *index.Index, question st
 // deterministicPages は、モデルの揺らぎに任せず保持するページ候補を返す。
 // M18の33問では型番一致だけだと正解ページを保証できたのは2/31問だったが、
 // 質問中の実在タイトルを合流すると20/31問に増えた。
-func deterministicPages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
+func deterministicPages(ix *index.Index, question string, sc Scope) []*index.Page {
 	var out []*index.Page
 	seen := map[string]bool{}
-	for _, candidates := range [][]*index.Page{directTitlePages(ix, question, a), identifierPages(ix, question, a), linkPages(ix, question, a)} {
+	for _, candidates := range [][]*index.Page{directTitlePages(ix, question, sc), identifierPages(ix, question, sc), linkPages(ix, question, sc)} {
 		for _, pg := range candidates {
 			if pg == nil || seen[pg.Title] {
 				continue
@@ -552,41 +615,81 @@ func deterministicPages(ix *index.Index, question string, a *state.Assistant) []
 	return out
 }
 
-// OriginLabel は出所を利用者に見せる名前へ直す。出所が増えるたびに
-// 分岐を書き足すと表示が食い違うので、ここ1か所に集める。
+// 索引に入っている資料の出所。**ここに無い値は資料として扱わない。**
+//
+// ⚠️ 既定を「Wiki」にしていたため、新しい出所を索引へ入れた瞬間に
+// **中身はDriveなのに「Wiki」と表示される**穴があった（2026-09-13にCodexが指摘）。
+// 出所が増えるときは、必ずここと OriginLabel の両方を直す。
+const (
+	OriginWiki  = "wiki"
+	OriginSite  = "site"
+	OriginFEE   = "fee"
+	OriginDrive = "drive"
+)
+
+// originLabels は出所を利用者に見せる名前。出所が増えるたびに分岐を書き足すと
+// 表示が食い違うので、ここ1か所に集める。
+var originLabels = map[string]string{
+	OriginWiki:  "Wiki",
+	OriginSite:  "公式サイト",
+	OriginFEE:   "フライトシミュレータ",
+	OriginDrive: "共有ドライブ",
+}
+
+// OriginLabel は出所を利用者に見せる名前へ直す。
+//
+// **知らない出所を「Wiki」に丸めない。** 丸めると、部外に出せない資料が
+// 「Wiki」の顔をして出典に並ぶ。分からないときは分からないと書く。
 func OriginLabel(source string) string {
-	switch source {
-	case "site":
-		return "公式サイト"
-	case "fee":
-		return "フライトシミュレータ"
-	default:
+	if label, ok := originLabels[source]; ok {
+		return label
+	}
+	if source == "" {
+		// 旧い index.json には source が無い。当時はWikiだけだった
 		return "Wiki"
 	}
+	return "不明な資料"
+}
+
+// KnownOrigin は索引に入ってよい出所かを返す。
+func KnownOrigin(source string) bool {
+	_, ok := originLabels[source]
+	return ok || source == ""
 }
 
 // questionAllowsOrigin は「WASA Wikiにあるか」のように出所を明記した質問で、
 // 公式サイトの似たページが出典へ混ざるのを防ぐ。両方を明記した比較質問は絞らない。
+//
+// ⚠️ **「Wikiにある？」で Wiki 以外を通さない。** 以前は `pg.Source != "site"`
+// と書いており、出所が増えた瞬間に**Wikiを指定した質問へDriveの資料が混ざる**
+// 状態だった（2026-09-13にCodexが指摘）。名指しされた出所だけを通す。
 func questionAllowsOrigin(question string, pg *index.Page) bool {
 	lower := strings.ToLower(question)
 	wantsWiki := strings.Contains(lower, "wiki") || strings.Contains(question, "引き継ぎ資料")
 	wantsSite := strings.Contains(question, "公式サイト")
+	wantsDrive := strings.Contains(question, "ドライブ") || strings.Contains(lower, "drive")
 	// フライトシミュレータは別ソフトの資料なので、名指しされたらそこだけに絞る。
 	// 逆に名指しされていない質問へ紛れ込むと、機体の話にソフトの手順が混ざる
 	wantsFEE := strings.Contains(question, "シミュレータ") || strings.Contains(question, "シミュレーター") ||
 		strings.Contains(lower, "flightgear") || strings.Contains(lower, "fee") ||
 		strings.Contains(lower, "flightenvironment")
-	if wantsFEE && !wantsWiki && !wantsSite {
-		return pg.Source == "fee"
+	if wantsFEE && !wantsWiki && !wantsSite && !wantsDrive {
+		return pg.Source == OriginFEE
 	}
-	if pg.Source == "fee" {
+	if pg.Source == OriginFEE {
 		return wantsFEE
 	}
+	// 共有ドライブも名指しされたときだけ、そこに絞る。逆に、名指しされていない
+	// 質問へ紛れ込むのは許す（Wikiに無い資料がDriveにあることが多いため）
+	if wantsDrive && !wantsWiki && !wantsSite {
+		return pg.Source == OriginDrive
+	}
 	if wantsWiki && !wantsSite {
-		return pg.Source != "site"
+		// **Wiki だけ。** 「!= site」と書くと、出所が増えるたびに穴が開く
+		return pg.Source == OriginWiki || pg.Source == ""
 	}
 	if wantsSite && !wantsWiki {
-		return pg.Source == "site"
+		return pg.Source == OriginSite
 	}
 	return true
 }
@@ -619,7 +722,7 @@ func linkQuestionTerms(question string) []string {
 // linkPages はURLを尋ねる質問だけ、リンクを含む本文まで直接照合する。
 // 目次のリード文は全節を載せられず、メインページ後半の「過去問」は
 // index.jsonに存在していてもページ選択から落ちた実例がある。
-func linkPages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
+func linkPages(ix *index.Index, question string, sc Scope) []*index.Page {
 	if !linkRequestPattern.MatchString(question) {
 		return nil
 	}
@@ -635,7 +738,7 @@ func linkPages(ix *index.Index, question string, a *state.Assistant) []*index.Pa
 	var ranked []scored
 	for order := range ix.Pages {
 		pg := &ix.Pages[order]
-		if len(pg.Chunks) == 0 || !inScope(pg, a) || !questionAllowsOrigin(question, pg) {
+		if len(pg.Chunks) == 0 || !inScope(pg, sc) || !questionAllowsOrigin(question, pg) {
 			continue
 		}
 		hay := pg.Title
@@ -679,7 +782,7 @@ func normalizePageMention(value string) string {
 
 // directTitlePages は「HPA交流会」のように質問が実在ページ名を明記した場合の保険。
 // 40th / 40代は同じ世代とみなし、「40thの空力設計」の語順でも「空力設計(40th)」を拾う。
-func directTitlePages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
+func directTitlePages(ix *index.Index, question string, sc Scope) []*index.Page {
 	normalizedQuestion := normalizePageMention(question)
 	asciiWords := map[string]bool{}
 	for _, word := range asciiWordPattern.FindAllString(strings.ToLower(question), -1) {
@@ -693,7 +796,7 @@ func directTitlePages(ix *index.Index, question string, a *state.Assistant) []*i
 	var ranked []scored
 	for order := range ix.Pages {
 		pg := &ix.Pages[order]
-		if len(pg.Chunks) == 0 || !inScope(pg, a) {
+		if len(pg.Chunks) == 0 || !inScope(pg, sc) {
 			continue
 		}
 		title := normalizePageMention(pg.Title)
@@ -744,7 +847,7 @@ func directTitlePages(ix *index.Index, question string, a *state.Assistant) []*i
 // identifierPages は質問中の型番を、ハイフンとアンダースコアの表記差を
 // 無視して本文全体から探す。索引は数MBなので、型番がある質問だけ
 // 総当たりしても検索基盤を増やす必要はない。
-func identifierPages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
+func identifierPages(ix *index.Index, question string, sc Scope) []*index.Page {
 	identifiers := questionIdentifiers(question)
 	if len(identifiers) == 0 {
 		return nil
@@ -758,7 +861,7 @@ func identifierPages(ix *index.Index, question string, a *state.Assistant) []*in
 	var ranked []scored
 	for i := range ix.Pages {
 		pg := &ix.Pages[i]
-		if len(pg.Chunks) == 0 || !inScope(pg, a) {
+		if len(pg.Chunks) == 0 || !inScope(pg, sc) {
 			continue
 		}
 		score := 0
@@ -809,7 +912,7 @@ func questionIdentifiers(question string) map[string]bool {
 
 // fallbackPages は LLM がページを1件も返せなかったときの保険。
 // 目次に対する素朴な字面一致。精度は高くないが「何も答えられない」よりはよい。
-func fallbackPages(ix *index.Index, question string, a *state.Assistant) []*index.Page {
+func fallbackPages(ix *index.Index, question string, sc Scope) []*index.Page {
 	grams := map[string]bool{}
 	runes := []rune(question)
 	for i := 0; i+1 < len(runes); i++ {
@@ -830,7 +933,7 @@ func fallbackPages(ix *index.Index, question string, a *state.Assistant) []*inde
 		// questionAllowsOrigin が効くが、ここだけは結果をそのまま使うため、
 		// 抜けていると「公式サイトに載っていますか」に引き継ぎWikiを返せてしまった
 		// （2026-09-12に発見）。救済経路だけ規則が緩む形を残さない。
-		if len(pg.Chunks) == 0 || !inScope(pg, a) || !questionAllowsOrigin(question, pg) {
+		if len(pg.Chunks) == 0 || !inScope(pg, sc) || !questionAllowsOrigin(question, pg) {
 			continue
 		}
 		hay := pg.Title
@@ -982,3 +1085,18 @@ func extractJSON(s string) string {
 	}
 	return s
 }
+
+// 入力欄の「+」で足せる参照先。**索引の origin とは別の概念である。**
+//
+// origin（wiki / site / fee / drive）は索引に入っている資料の出所で、
+// アシスタントの参照範囲はそれを**狭める**。ここに並ぶのは「既定では読まない
+// 置き場所を**足す**」もので、向きが逆になる。
+const (
+	// ToolDrive は部の共有ドライブ。**索引には入っているが既定では読まない。**
+	// Wikiに書かない部員の資料が溜まっている場所で、量も質もばらつくため、
+	// 要るときだけ足す（目次も分けてある。index.Index.DriveTOC）
+	ToolDrive = "drive"
+	// ToolDiscord は公開チャンネルの会話。索引には入れない
+	// （会話は流れるもので量も多く、資料とは性質が違う）
+	ToolDiscord = "discord"
+)

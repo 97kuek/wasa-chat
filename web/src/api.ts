@@ -84,6 +84,30 @@ export type Event =
 export type Session = { authenticated: boolean; username: string; icon?: string; remaining: number; admin: boolean };
 
 /**
+ * 入力欄の「+」から足せる参照先。
+ *
+ * **引き継ぎ資料（Wiki・公式サイト・フライトシミュレータ）はここに出ない。**
+ * それらは常に読むので、ここは「それ以外の置き場所」だけを並べる。
+ *
+ * available が false のものも返る。**黙って消すと「無い機能」に見える**ので、
+ * 設定が要るだけなら reason にそう書いて出す。
+ */
+export type Tool = {
+  id: string;
+  name: string;
+  description: string;
+  available: boolean;
+  /** available が false のときだけ入る。なぜ使えないか */
+  reason?: string;
+};
+
+export async function tools(): Promise<Tool[]> {
+  const res = await fetch(`${API_ORIGIN}/api/tools`, { credentials: "include" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+/**
  * Wikiのアカウントでログインする。
  *
  * パスワードはサーバーがWikiに中継して検証するだけで、保存もログ出力もしない。
@@ -314,6 +338,7 @@ export async function ask(
   onEvent: (event: Event) => void,
   signal?: AbortSignal,
   assistantId?: string,
+  enabledTools?: string[],
   context: ConversationContextTurn[] = [],
   responseMode: ResponseMode = "auto",
   attachments: string[] = [],
@@ -323,7 +348,10 @@ export async function ask(
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, assistantId: assistantId ?? "", context, responseMode, attachments }),
+    body: JSON.stringify({
+      question, assistantId: assistantId ?? "", context, responseMode, attachments,
+      tools: enabledTools ?? [],
+    }),
     signal,
   });
   if (!res.ok || !res.body) {

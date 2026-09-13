@@ -12,6 +12,7 @@ import {
   session,
   submitFeedback,
   updateAssistant,
+  tools as fetchTools,
   updateProfileIcon,
   type Assistant,
   type AssistantDraft,
@@ -20,6 +21,7 @@ import {
   type FeedbackReason,
   type StageTimingName,
   type Team,
+  type Tool,
   type Turn,
 } from "./api";
 import { stripCitation } from "./answer";
@@ -30,6 +32,7 @@ import { AssistantSettingsForm, type AssistantFormMode } from "./assistant/Setti
 import { LoadingScreen } from "./components/LoadingScreen";
 import { ReferenceSummary } from "./components/ReferenceSummary";
 import { SelectMenu, type SelectOption } from "./components/SelectMenu";
+import { ToolMenu } from "./components/ToolMenu";
 import { Spinner } from "./components/Spinner";
 import { Toast } from "./components/Toast";
 import {
@@ -89,6 +92,8 @@ type Announcement = {
 
 const ANNOUNCEMENT_READ_KEY = "wasa-chat-read-announcements";
 const ASSISTANT_KEY = "wasa-chat-assistant";
+/** 「+」で足した参照先。次に開いたときも同じ状態にしたいので覚えておく */
+const TOOLS_KEY = "wasa-chat-tools";
 const ASSISTANT_FAVORITES_KEY = "wasa-chat-assistant-favorites";
 const ASSISTANT_SORT_KEY = "wasa-chat-assistant-sort";
 function resizeComposerTextarea(target: HTMLTextAreaElement | null): void {
@@ -136,6 +141,7 @@ const makeId = () => crypto.randomUUID();
 
 const loadReadAnnouncementIds = () => readStoredIds(ANNOUNCEMENT_READ_KEY);
 const loadFavoriteAssistantIds = () => readStoredIds(ASSISTANT_FAVORITES_KEY);
+const loadEnabledTools = () => readStoredIds(TOOLS_KEY);
 
 function loadAssistantSort(): AssistantSort {
   const saved = readStored("local", ASSISTANT_SORT_KEY);
@@ -202,6 +208,8 @@ export default function App() {
   // 選んだアシスタントは端末に覚える。毎回選び直させると、結局
   // 誰も使わない機能になる（サーバーに持つほどの情報でもない）
   const [assistantId, setAssistantId] = useState(() => readStored("local", ASSISTANT_KEY) ?? "");
+  const [availableTools, setAvailableTools] = useState<Tool[]>([]);
+  const [enabledTools, setEnabledTools] = useState<string[]>(loadEnabledTools);
   // チャット画面とアシスタント一覧を切り替える。モーダルではなく画面ごと
   // 差し替えるのは、一覧が「選ぶ場所」であって会話の付随物ではないため
   const [view, setView] = useState<"chat" | "assistants" | "admin">(
@@ -470,6 +478,7 @@ export default function App() {
 		}
     void restoreHistory();
     void refreshAssistants();
+    void refreshTools();
   }
 
   async function handleLogout() {
@@ -771,6 +780,15 @@ export default function App() {
       showToast("チャット履歴を削除できませんでした");
       void restoreHistory();
     }
+  }
+
+  // 参照先は**サーバーが決める**。画面に固定で並べると、未設定のものが
+  // 押せてしまい「押したのに効かない」になる（available と reason を返す）
+  async function refreshTools() {
+    const list = await fetchTools().catch(() => [] as Tool[]);
+    setAvailableTools(list);
+    // 使えなくなったものをオンのまま残さない。表示と実際の参照先が食い違う
+    setEnabledTools((current) => current.filter((id) => list.some((tool) => tool.id === id && tool.available)));
   }
 
   async function refreshAssistants() {
@@ -1126,7 +1144,7 @@ export default function App() {
           patch((current) => ({ ...current, streaming: false, status: "", retryAt: undefined }));
           break;
       }
-      }, controller.signal, assistantId, context, responseMode, sent ? [sent.dataUrl] : []);
+      }, controller.signal, assistantId, enabledTools, context, responseMode, sent ? [sent.dataUrl] : []);
     } catch (error) {
       // fetch自体の失敗やストリームの切断は ask() の中でイベントにならない。
       // ここで拾わないと streaming が立ったままになり、入力欄が永久に
@@ -1752,6 +1770,15 @@ export default function App() {
                   event.target.value = "";
                   void attachImage(file);
                 }}
+              />
+              <ToolMenu
+                tools={availableTools}
+                enabled={enabledTools}
+                onChange={(next) => {
+                  setEnabledTools(next);
+                  writeStored("local", TOOLS_KEY, JSON.stringify(next));
+                }}
+                disabled={streaming}
               />
               <button
                 type="button"

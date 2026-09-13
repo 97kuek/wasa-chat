@@ -39,7 +39,7 @@ func TestInScope(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := inScope(c.page, c.assistant); got != c.want {
+			if got := inScope(c.page, Scope{Assistant: c.assistant}); got != c.want {
 				t.Errorf("inScope() = %v, want %v", got, c.want)
 			}
 		})
@@ -70,7 +70,7 @@ func TestFallbackPagesKeepsOriginFilter(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var got []string
-			for _, pg := range fallbackPages(ix, c.question, nil) {
+			for _, pg := range fallbackPages(ix, c.question, Scope{}) {
 				got = append(got, pg.Title)
 			}
 			if len(got) != len(c.want) {

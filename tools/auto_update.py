@@ -56,7 +56,7 @@ MANIFEST = ROOT / "data" / "sources.json"
 DUMP = ROOT / "dump"
 # 取得済みの生データ。**変わっていない出所を取り直さないために持ち回る。**
 # 索引と同じ非公開バケットへ置く（中身は索引に入っているものと同じ）
-DUMP_FILES = ("pages.jsonl", "site.jsonl", "fee.jsonl", "images.json")
+DUMP_FILES = ("pages.jsonl", "site.jsonl", "fee.jsonl", "drive.jsonl", "images.json")
 
 # 取得の失敗を公開しないための下限。publish-index.sh と同じ値にすること
 MIN_PAGES = 100
@@ -116,7 +116,36 @@ def remote_snapshot() -> dict:
     except Exception as error:  # noqa: BLE001 — 第三者サイト。落ちても全体は止めない
         print(f"ガイドの一覧を取れませんでした（変更なしとして続けます）: {error}")
         fee = {}
-    return {"wiki": wiki, "site": site, "fee": fee}
+
+    # 共有ドライブは modifiedTime を変更の印にする。
+    #
+    # ⚠️ **これは「中身が新しい」ではなく「触られた」印である。** 誤字を1つ
+    # 直しただけでも新しくなるので、再構築の引き金にはしてよいが、
+    # 資料の鮮度として使ってはいけない（docs/01 §5-1 と同じ扱い）。
+    #
+    # DRIVE_FOLDER_IDS が未設定なら共有ドライブは使っていないので、空を返す。
+    # 空のまま比べると「全削除」に見えるので、changed_since 側で見ない
+    drive = drive_snapshot()
+    return {"wiki": wiki, "site": site, "fee": fee, "drive": drive}
+
+
+def drive_snapshot() -> dict:
+    """共有ドライブのファイル一覧（ID → 更新時刻）。使っていなければ空。"""
+    if not os.getenv("DRIVE_FOLDER_IDS", "").strip():
+        return {}
+    try:
+        import dump_drive
+
+        service = dump_drive.build_service()
+        seen: set[str] = set()
+        found: dict[str, str] = {}
+        for folder in dump_drive.folder_ids():
+            for entry in dump_drive.walk(service, folder, seen):
+                found[entry["id"]] = entry.get("modifiedTime", "")
+        return found
+    except Exception as error:  # noqa: BLE001 — 外部API。落ちても全体は止めない
+        print(f"共有ドライブの一覧を取れませんでした（変更なしとして続けます）: {error}")
+        return {}
 
 
 def source_counts(index: dict) -> Counter:
@@ -135,6 +164,10 @@ def changed_since(previous: dict, snapshot: dict) -> set[str]:
         "ガイド", previous.get("fee", {}), snapshot["fee"]
     ):
         changed.add("fee")
+    if snapshot.get("drive") and check_updates.describe_changes(
+        "共有ドライブ", previous.get("drive", {}), snapshot["drive"]
+    ):
+        changed.add("drive")
     return changed
 
 
@@ -156,6 +189,7 @@ def rebuild(sources: set[str]) -> None:
         ("wiki", "Wikiを取得", "dump_wiki.py"),
         ("site", "公式サイトを取得", "dump_site.py"),
         ("fee", "フライトシミュレータのガイドを取得", "dump_fee.py"),
+        ("drive", "共有ドライブを取得", "dump_drive.py"),
     ]
     for key, label, script in steps:
         if key not in sources:

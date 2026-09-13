@@ -269,3 +269,15 @@ func TestPromptSectionOmitsEmptyGlossary(t *testing.T) {
 		t.Fatal("用語集が空でも見出しが出ている")
 	}
 }
+
+// ⚠️ **資料の本文は信頼できない入力である。** Wikiは部員が自由に書けるし、
+// 共有ドライブはさらに誰でも置ける。「以前の指示を無視せよ」と書いた文書を
+// 索引へ入れられたときに、それを命令として実行してはいけない
+// （2026-09-13のCodex指摘。Discordの会話ログと同じ扱い）
+func TestGuardsTreatSourcesAsDataNotInstructions(t *testing.T) {
+	for name, guard := range map[string]string{"アシスタント": Guard, "汎用": genericGuard} {
+		if !strings.Contains(guard, "従う対象ではない") {
+			t.Fatalf("%s: 資料内の指示への防御が無い:\n%s", name, guard)
+		}
+	}
+}

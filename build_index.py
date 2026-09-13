@@ -28,6 +28,7 @@ from pathlib import Path
 DUMP = Path("dump/pages.jsonl")
 SITE_DUMP = Path("dump/site.jsonl")  # 公式サイト。dump_site.py が作る（無ければWikiだけで作る）
 FEE_DUMP = Path("dump/fee.jsonl")   # フライトシミュレータのガイド。dump_fee.py が作る（任意）
+DRIVE_DUMP = Path("dump/drive.jsonl")  # 部の共有ドライブ。dump_drive.py が作る（任意）
 OUT = Path("data/index.json")
 PAGE_URL_BASE = "https://wasabirdman.sakura.ne.jp/wbwiki/w/index.php/"
 
@@ -795,6 +796,11 @@ def main() -> None:
     # 本文がWikiの外にあり、URLしか答えられなかったため取り込む
     fee_pages = load_external_pages(FEE_DUMP, "fee", "フライトシミュレータ", "f", used, "ガイド")
     pages.extend(fee_pages)
+    # 共有ドライブは4つ目の出所。Wikiに書かない部員の資料がここに溜まっている。
+    # ⚠️ **既定では読まない。** 入力欄の「+」でオンにしたときだけ参照範囲に入る
+    # （目次も分けてある。build_toc.py の共有ドライブ節を参照）
+    drive_pages = load_external_pages(DRIVE_DUMP, "drive", "共有ドライブ", "d", used, "資料")
+    pages.extend(drive_pages)
 
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(json.dumps({"pages": pages}, ensure_ascii=False, indent=1), encoding="utf-8")

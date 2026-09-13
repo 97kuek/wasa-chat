@@ -123,6 +123,7 @@ def main() -> None:
     pages = [p for p in all_pages if p.get("source", "wiki") == "wiki"]
     site = [p for p in all_pages if p.get("source") == "site"]
     fee = [p for p in all_pages if p.get("source") == "fee"]
+    drive = [p for p in all_pages if p.get("source") == "drive"]
 
     order = {team: i for i, team in enumerate(TEAM_ORDER)}
     pages.sort(
@@ -178,6 +179,20 @@ def main() -> None:
         for page in sorted(fee, key=lambda p: (p.get("kind") != "紹介", p["title"])):
             lines += render_page(page)
 
+    # ⚠️ **共有ドライブは必ず最後に置く。** ここより前は「常に載せる固定
+    # プレフィックス」で、プロンプトキャッシュが効く部分である。Driveを間に
+    # 混ぜると、Driveのファイルが1つ増減するたびに前半のバイト列まで変わり、
+    # **キャッシュが毎回外れる**。また、Driveをオフにしている会話へファイル名が
+    # 漏れることにもなる（2026-09-13のCodex指摘）。
+    #
+    # サーバー側（index.Build）はこの見出しで切り、Driveがオンのときだけ後ろを足す。
+    if drive:
+        lines += ["", f"## 共有ドライブ（部内限定）全{len(drive)}ファイル", ""]
+        lines += ["Wikiに書かれていない議事録・設計メモ・報告書。"
+                  "入力欄の「+」で参照先に足したときだけ読む。", ""]
+        for page in sorted(drive, key=lambda p: (p.get("kind", ""), p["title"])):
+            lines += render_page(page)
+
     toc = "\n".join(lines) + "\n"
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(toc, encoding="utf-8")
@@ -187,11 +202,17 @@ def main() -> None:
     chars = len(toc)
     print("=" * 56)
     print(f"目次を生成      : {OUT}")
-    print(f"ページ数        : {len(pages) + len(site) + len(fee)}"
-          f"（Wiki {len(pages)} / 公式サイト {len(site)} / フライトシミュレータ {len(fee)}）")
+    print(f"ページ数        : {len(pages) + len(site) + len(fee) + len(drive)}"
+          f"（Wiki {len(pages)} / 公式サイト {len(site)} / フライトシミュレータ {len(fee)}"
+          f" / 共有ドライブ {len(drive)}）")
     print(f"文字数          : {chars:,} 字（うち事実カード {len(chr(10).join(facts)):,} 字）")
     print(f"推定トークン数  : {int(chars / 1.5):,} 〜 {chars:,}")
-    print(f"1ページあたり   : {chars // max(1, len(pages) + len(site) + len(fee))} 字")
+    print(f"1ページあたり   : {chars // max(1, len(pages) + len(site) + len(fee) + len(drive))} 字")
+    if drive:
+        # 固定プレフィックスに入るのは共有ドライブ節より前だけ。ここを膨らませない
+        drive_at = toc.index("## 共有ドライブ（部内限定）")
+        print(f"  うち固定部分  : {drive_at:,} 字（共有ドライブ {chars - drive_at:,} 字は"
+              f"「+」でオンにしたときだけ載る）")
 
     # プロンプトキャッシュに載る前提での概算（Sonnet 5 / 1時間TTL、$1=150円）
     tokens = chars  # 上振れ側で見積もる

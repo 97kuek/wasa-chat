@@ -71,7 +71,10 @@ type Index struct {
 	// Versionは本文を外へ出さず、どの索引を読んでいるか照合するための短いハッシュ。
 	// 管理画面で「公開した索引へ本当に切り替わったか」を判断するために使う。
 	Version string
-	TOC     string // 常時コンテキストに載せる目次
+	TOC     string // 常時コンテキストに載せる目次（共有ドライブの節は含まない）
+	// DriveTOC は共有ドライブの節だけ。**「+」でオンにしたときだけ載せる。**
+	// 固定プレフィックスへ混ぜるとキャッシュが外れ、オフの会話へも漏れる
+	DriveTOC string
 	// SiteTOC は公式サイト（一般公開）の部分だけを抜いた目次。
 	//
 	// 「公式サイトのみ」のアシスタントに TOC をそのまま渡すと、選択ページと
@@ -98,8 +101,27 @@ type file struct {
 const (
 	wikiHeading   = "\n## 引き継ぎWiki（部内限定）"
 	siteHeading   = "\n## 公式サイト（一般公開"
+	driveHeading  = "\n## 共有ドライブ（部内限定"
 	originHeading = "\n## " // 出所の節の切れ目
 )
+
+// splitDriveTOC は目次から共有ドライブの節を切り離す。
+//
+// ⚠️ **共有ドライブの節を固定プレフィックスに入れない。** 目次はプロンプトの
+// 先頭に固定してキャッシュを効かせている（docs/01 §4）。Driveの節を混ぜると、
+//
+//   - ファイルが1つ増減するたびに前半のバイト列まで変わり、**キャッシュが外れる**
+//   - Driveをオフにしている会話へ、ファイル名と見出しが漏れる
+//
+// build_toc.py は共有ドライブの節を**必ず最後**に置く。ここで切って、
+// オンのときだけ後ろへ足す（2026-09-13のCodex指摘）。
+func splitDriveTOC(toc string) (fixed, drive string) {
+	at := strings.Index(toc, driveHeading)
+	if at < 0 {
+		return toc, ""
+	}
+	return toc[:at] + "\n", strings.TrimSpace(toc[at:])
+}
 
 // siteOnlyTOC は目次から公式サイトの節だけを抜き出す。
 //
@@ -159,14 +181,16 @@ func Build(raw, toc []byte) (*Index, error) {
 	digest.Write(raw)
 	digest.Write([]byte{0})
 	digest.Write(toc)
+	fixedTOC, driveTOC := splitDriveTOC(string(toc))
 	ix := &Index{
-		Version: fmt.Sprintf("%x", digest.Sum(nil))[:12],
-		TOC:     string(toc),
-		SiteTOC: siteOnlyTOC(string(toc)),
-		Pages:   parsed.Pages,
-		byName:  make(map[string]*Page),
-		byID:    make(map[string]*Chunk),
-		owner:   make(map[string]*Page),
+		Version:  fmt.Sprintf("%x", digest.Sum(nil))[:12],
+		TOC:      fixedTOC,
+		DriveTOC: driveTOC,
+		SiteTOC:  siteOnlyTOC(fixedTOC),
+		Pages:    parsed.Pages,
+		byName:   make(map[string]*Page),
+		byID:     make(map[string]*Chunk),
+		owner:    make(map[string]*Page),
 	}
 	for i := range ix.Pages {
 		p := &ix.Pages[i]

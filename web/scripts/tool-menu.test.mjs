@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const menu = readFileSync(new URL("../src/components/ToolMenu.tsx", import.meta.url), "utf8");
+const page = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const api = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+
+test("入力欄の「+」から参照先をオン・オフできる", () => {
+  assert.match(page, /<ToolMenu/);
+  assert.match(menu, /tool-trigger/);
+  assert.match(menu, /aria-label="参照先を選ぶ"/);
+  // スイッチの本体はチェックボックスのまま。キーボード操作と読み上げを標準に任せる
+  assert.match(menu, /type="checkbox"/);
+  assert.match(styles, /\.tool-switch input:checked \+ \.tool-switch-track/);
+});
+
+test("使えない参照先も一覧に出し、理由を書く", () => {
+  // ⚠️ 黙って消すと「無い機能」に見え、設定すれば使えることが伝わらない
+  assert.match(menu, /tool\.available \? tool\.description : tool\.reason/);
+  assert.match(menu, /未接続/);
+  assert.match(api, /reason\?: string/);
+});
+
+test("参照先はサーバーが決める（画面に固定で並べない）", () => {
+  assert.match(api, /\$\{API_ORIGIN\}\/api\/tools/);
+  assert.match(page, /void refreshTools\(\);/);
+  // 使えなくなったものをオンのまま残さない。表示と実際の参照先が食い違う
+  assert.match(page, /current\.filter\(\(id\) => list\.some\(\(tool\) => tool\.id === id && tool\.available\)\)/);
+});
+
+test("選んだ参照先を質問と一緒に送り、次に開いたときも覚えている", () => {
+  assert.match(api, /tools: enabledTools \?\? \[\]/);
+  assert.match(page, /controller\.signal, assistantId, enabledTools,/);
+  assert.match(page, /writeStored\("local", TOOLS_KEY/);
+});
+
+test("何かオンになっていることが、開かなくても分かる", () => {
+  assert.match(menu, /className=\{`tool-trigger\$\{active\.length > 0 \? " is-active" : ""\}`\}/);
+  assert.match(styles, /\.tool-trigger\.is-active/);
+  assert.match(styles, /\.tool-badge/);
+});
+
+test("入力欄は最下部にあるので、一覧は上へ開く", () => {
+  assert.match(styles, /\.tool-popover \{[\s\S]*?bottom: calc\(100% \+ 8px\)/);
+});
+
+test("回答中は参照先を変えられない（送信済みの質問と食い違う）", () => {
+  assert.match(page, /<ToolMenu[\s\S]*?disabled=\{streaming\}/);
+});

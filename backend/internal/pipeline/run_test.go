@@ -359,7 +359,7 @@ func TestSelectPagesAddsNormalizedIdentifierMatch(t *testing.T) {
 	client := &stubLLM{titles: []string{"人物ページ"}}
 	pipe := New(index.NewLive(testIdentifierIndex(t), "test"), client)
 
-	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "TR797とは何ですか？", nil, llm.ProfileFast, nil)
+	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "TR797とは何ですか？", Scope{}, llm.ProfileFast, nil)
 	if err != nil {
 		t.Fatalf("ページ選択が失敗: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestSelectPagesAddsNormalizedIdentifierMatch(t *testing.T) {
 
 func TestDirectTitlePagesPrioritizesGenerationSpecificPages(t *testing.T) {
 	pipe := New(index.NewLive(testDirectTitleIndex(t), "test"), &stubLLM{})
-	pages := directTitlePages(pipe.Index(), "41stの空力設計と40代の空力設計は何が違いますか？", nil)
+	pages := directTitlePages(pipe.Index(), "41stの空力設計と40代の空力設計は何が違いますか？", Scope{})
 	if len(pages) != 2 || pages[0].Title != "空力設計(40th)" || pages[1].Title != "空力設計(41st)" {
 		t.Fatalf("世代別ページが汎用ページより優先されていない: %+v", pages)
 	}
@@ -382,7 +382,7 @@ func TestDirectTitlePagesPrioritizesGenerationSpecificPages(t *testing.T) {
 func TestSelectPagesKeepsDirectTitleMatchAlongsideModelChoice(t *testing.T) {
 	client := &stubLLM{titles: []string{"人物ページ"}}
 	pipe := New(index.NewLive(testDirectTitleIndex(t), "test"), client)
-	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "HPA交流会の準備を教えてください", nil, llm.ProfileStandard, nil)
+	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "HPA交流会の準備を教えてください", Scope{}, llm.ProfileStandard, nil)
 	if err != nil {
 		t.Fatalf("ページ選択が失敗: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestLinkQuestionFindsWikiMainPageAndExcludesOfficialSite(t *testing.T) {
 	}
 	client := &stubLLM{titles: []string{"公式サイト"}}
 	pipe := New(index.NewLive(ix, "test"), client)
-	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "WASA Wikiには情報通信学科の過去問がありますか？リンクを教えてください", nil, llm.ProfileStandard, nil)
+	pages, err := pipe.selectPages(context.Background(), pipe.Index(), "WASA Wikiには情報通信学科の過去問がありますか？リンクを教えてください", Scope{}, llm.ProfileStandard, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,13 +454,13 @@ func TestWhereQuestionFindsLinkPageWithoutPushingOutTitleMatch(t *testing.T) {
 	pipe := New(index.NewLive(ix, "test"), &stubLLM{})
 
 	// 1. 「どこにありますか」でもリンクを含むページを保持する
-	got := deterministicPages(pipe.Index(), "情報通信学科の過去問はどこにありますか？", nil)
+	got := deterministicPages(pipe.Index(), "情報通信学科の過去問はどこにありますか？", Scope{})
 	if len(got) == 0 || got[0].Title != "メインページ" {
 		t.Fatalf("「どこ」の質問でリンク先ページを保持できていない: %+v", titlesOf(got))
 	}
 
 	// 2. タイトルが一致するページを、本文スコアで押し出さない
-	got = deterministicPages(pipe.Index(), "合宿で39代はどこに行きましたか？", nil)
+	got = deterministicPages(pipe.Index(), "合宿で39代はどこに行きましたか？", Scope{})
 	if len(got) == 0 || got[0].Title != "合宿" {
 		t.Fatalf("実在タイトルの一致が本文スコアに負けている: %+v", titlesOf(got))
 	}
@@ -523,10 +523,10 @@ func TestPagesEventCarriesReadSections(t *testing.T) {
 
 func TestDirectTitlePagesRespectsScopeAndASCIIWordBoundary(t *testing.T) {
 	pipe := New(index.NewLive(testDirectTitleIndex(t), "test"), &stubLLM{})
-	if pages := directTitlePages(pipe.Index(), "RPMの計測方法", nil); len(pages) != 0 {
+	if pages := directTitlePages(pipe.Index(), "RPMの計測方法", Scope{}); len(pages) != 0 {
 		t.Fatalf("短いPMがRPMの部分一致で拾われた: %+v", pages)
 	}
-	if pages := directTitlePages(pipe.Index(), "HPA交流会について", &state.Assistant{Team: "空力"}); len(pages) != 0 {
+	if pages := directTitlePages(pipe.Index(), "HPA交流会について", Scope{Assistant: &state.Assistant{Team: "空力"}}); len(pages) != 0 {
 		t.Fatalf("アシスタントの参照範囲外が残った: %+v", pages)
 	}
 }
@@ -644,7 +644,7 @@ func TestRunScopedTOCHidesWikiSection(t *testing.T) {
 // 目次の見出しが変わって分割できないときは、全体を渡すのではなく目次なしにする。
 func TestSiteTOCFailsClosed(t *testing.T) {
 	ix := testIndexWithTOC(t, "# 目次\n\n見出しの形式が変わった\n")
-	if got := scopedTOC(ix, &state.Assistant{Origin: "site"}); got != "" {
+	if got := scopedTOC(ix, Scope{Assistant: &state.Assistant{Origin: "site"}}); got != "" {
 		t.Errorf("分割できないのに目次を渡した: %q", got)
 	}
 }
@@ -725,16 +725,16 @@ func TestDesignScopeCoversAerodynamicsAndStructure(t *testing.T) {
 	a := &state.Assistant{Name: "設計（空力・構造）", Team: "設計"}
 	for _, c := range pages {
 		pg := &index.Page{Title: c.title, Source: "wiki", Team: c.team}
-		if got := inScope(pg, a); got != c.want {
+		if got := inScope(pg, Scope{Assistant: a}); got != c.want {
 			t.Errorf("%s（区分=%s）: inScope=%v, 期待=%v", c.title, c.team, got, c.want)
 		}
 	}
 	// 単独区分の指定は従来どおり
 	solo := &state.Assistant{Name: "電装班", Team: "電装"}
-	if !inScope(&index.Page{Title: "電装班", Source: "wiki", Team: "電装"}, solo) {
+	if !inScope(&index.Page{Title: "電装班", Source: "wiki", Team: "電装"}, Scope{Assistant: solo}) {
 		t.Error("単独区分の指定が壊れている")
 	}
-	if inScope(&index.Page{Title: "空力設計(41st)", Source: "wiki", Team: "空力"}, solo) {
+	if inScope(&index.Page{Title: "空力設計(41st)", Source: "wiki", Team: "空力"}, Scope{Assistant: solo}) {
 		t.Error("単独区分が別の区分まで通している")
 	}
 }
@@ -753,7 +753,7 @@ func TestSiteTOCStopsAtNextOrigin(t *testing.T) {
 		"\n## 公式サイト（一般公開 wasa-birdman.com）全500ページ\n- **WASAについて知る** 団体紹介\n" +
 		"\n## フライトシミュレータのガイド（FlightEnvironmentEmulator）全32ページ\n- **FEEの使い方** ソフトの話\n"
 	ix := testIndexWithTOC(t, toc)
-	got := scopedTOC(ix, &state.Assistant{Origin: "site"})
+	got := scopedTOC(ix, Scope{Assistant: &state.Assistant{Origin: "site"}})
 
 	if !strings.Contains(got, "WASAについて知る") {
 		t.Fatalf("公式サイトの節が落ちている:\n%s", got)
