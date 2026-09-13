@@ -370,7 +370,10 @@ func main() {
 		DiscordPublicKey: os.Getenv("DISCORD_PUBLIC_KEY"),
 		DiscordAppID:     os.Getenv("DISCORD_APP_ID"),
 		DiscordBotToken:  os.Getenv("DISCORD_BOT_TOKEN"),
-		AdminUsers:       admins,
+		DiscordGuildID:   os.Getenv("DISCORD_GUILD_ID"),
+		// 未設定なら公開チャンネル全部。絞りたいときだけ指定する（docs/09 A-12）
+		DiscordSearchChannels: splitList(os.Getenv("DISCORD_SEARCH_CHANNELS")),
+		AdminUsers:            admins,
 	}
 	updateChecker := sourcecheck.New(
 		live, wikiAPI,

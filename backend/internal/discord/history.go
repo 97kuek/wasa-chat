@@ -73,6 +73,10 @@ type Message struct {
 		Bot        bool   `json:"bot"`
 	} `json:"author"`
 	Timestamp time.Time `json:"timestamp"`
+	// ChannelID は検索結果にだけ入る。どのチャンネルのヒットかを知るために要る
+	ChannelID string `json:"channel_id"`
+	// Hit は検索結果の組のうち、実際に一致した1件に立つ
+	Hit bool `json:"hit"`
 }
 
 func (m *Message) name() string {

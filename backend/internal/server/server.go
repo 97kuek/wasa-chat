@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,12 @@ type Config struct {
 	// SourceCheck は現在の索引とWiki・公式サイトを読み取り専用で照合する。
 	SourceCheck          func(context.Context) ([]state.SourceDelta, error)
 	SourceCheckAvailable bool
+	// DiscordGuildID は画面からDiscordを検索するときの対象サーバー。
+	// スラッシュコマンドには要らない（呼ばれた場所から分かるため）
+	DiscordGuildID string
+	// DiscordSearchChannels を設定すると、画面からの検索をそのチャンネルだけへ絞る。
+	// 未設定なら公開チャンネル全部（docs/09 A-12）
+	DiscordSearchChannels []string
 	// Discordのスラッシュコマンド。公開鍵が未設定なら口ごと開かない
 	DiscordPublicKey string
 	DiscordAppID     string
@@ -102,6 +109,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/feedback", s.requireAuth(s.handleSaveFeedback))
 	mux.HandleFunc("GET /api/admin/overview", s.requireAdmin(s.handleAdminOverview))
 	mux.HandleFunc("POST /api/admin/roles", s.requireOwner(s.handleAdminRole))
+	// 共有ドライブの許可は日常の運用なので、主管理者に限らず管理者が出せる
+	mux.HandleFunc("POST /api/admin/tools", s.requireAdmin(s.handleToolGrant))
 	mux.HandleFunc("POST /api/admin/source-check", s.requireAdmin(s.handleSourceCheck))
 	mux.HandleFunc("GET /api/tools", s.requireAuth(s.handleTools))
 	mux.HandleFunc("GET /api/assistants", s.requireAuth(s.handleListAssistants))
@@ -1023,7 +1032,13 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 	// ⚠️ **実効範囲はサーバーが決める。** 画面から届いた参照先は「足す」指定で、
 	// アシスタントの参照範囲（狭める指定）と合成した結果だけが使われる。
 	// 画面の指定をそのまま信じると、範囲外の資料が読まれる（2026-09-13のCodex）
-	scope := pipeline.NewScope(selected, s.allowedTools(body.Tools))
+	tools := s.allowedTools(r.Context(), user, body.Tools)
+	scope := pipeline.NewScope(selected, tools)
+	if slices.Contains(tools, pipeline.ToolDiscord) {
+		// **回答の前に拾う。** 索引には入っていないので、質問文で検索して
+		// 見つかった会話を材料として渡す（資料とは別の見出しで扱う）
+		scope.DiscordLog, scope.DiscordNote = s.searchDiscordFor(r.Context(), question)
+	}
 	if err := s.pipe.RunInScope(r.Context(), question, body.Context, scope, responseMode, images, emit); err != nil {
 		log.Printf("質問の処理に失敗: %v", err)
 		message := "回答の生成に失敗しました"

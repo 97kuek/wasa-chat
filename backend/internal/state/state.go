@@ -199,10 +199,22 @@ type AdminAudit struct {
 
 // AdminRole は主管理者が画面から付与した共同管理者権限。
 // 主管理者は環境変数ADMIN_USERSを復旧口として扱うため、ここには保存しない。
+// AdminRole は利用者ごとの「許可」をまとめた1件。
+//
+// 共同管理者かどうか（Role）と、使ってよい参照先（Tools）の両方を持つ。
+// **別の入れ物にしない。** 同じ利用者の許可が2か所に分かれると、退部時に
+// 片方だけ消し忘れる（一人保守だと必ず起きる。docs/09 A）。
 type AdminRole struct {
-	Key       string    `json:"-" firestore:"-"`
-	Username  string    `json:"username" firestore:"username"`
-	Role      string    `json:"role" firestore:"role"`
+	Key      string `json:"-" firestore:"-"`
+	Username string `json:"username" firestore:"username"`
+	// Role は "co_admin" か空。空でも Tools があれば、この文書は残る
+	Role string `json:"role" firestore:"role"`
+	// Tools は入力欄の「+」で使ってよい参照先。
+	//
+	// ⚠️ **共有ドライブは部内資料より緩い場所である。** Wikiに書かない人が
+	// 置いた資料が入るため、誰が読めるかを個別に決める（2026-09-13にPMが判断）。
+	// Discordは公開チャンネルだけを読むので、ここでは絞らない
+	Tools     []string  `json:"tools" firestore:"tools"`
 	GrantedBy string    `json:"grantedBy" firestore:"granted_by"`
 	GrantedAt time.Time `json:"grantedAt" firestore:"granted_at"`
 }

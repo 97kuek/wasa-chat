@@ -3,6 +3,7 @@ import {
   adminOverview,
   checkSources,
   setCoAdmin,
+  setToolGrant,
   type AdminOverview,
   type AdminUserUsage,
   type SourceCheckResult,
@@ -44,7 +45,7 @@ const PERIOD_OPTIONS: SelectOption[] = [
 const tabs: { id: AdminTab; label: string; description: string }[] = [
   { id: "overview", label: "概要", description: "今日の利用状況とシステムの状態を確認します。" },
   { id: "sources", label: "資料更新", description: "公開元の変更を確認し、変わっていれば手元で取り込み直します。" },
-  { id: "users", label: "利用者・権限", description: "利用回数の確認と、共同管理者の追加・解除を行います。" },
+  { id: "users", label: "利用者・権限", description: "利用回数の確認と、共同管理者や共有ドライブの許可を行います。" },
   { id: "quota", label: "API利用状況", description: "Gemini無料枠の利用量とリセット時刻を確認します。" },
   { id: "logs", label: "監査ログ", description: "質問本文を含まない利用記録と管理者操作を確認します。" },
 ];
@@ -81,6 +82,8 @@ const auditLabels: Record<string, string> = {
   "admin.overview.view": "管理画面を閲覧",
   "admin.role.grant": "共同管理者に追加",
   "admin.role.revoke": "共同管理者を解除",
+  "admin.tool.grant": "参照先を許可",
+  "admin.tool.revoke": "参照先の許可を解除",
   "assistant.delete": "管理者権限でアシスタントを削除",
   "source.check": "資料の更新を確認",
 };
@@ -149,6 +152,7 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
   const [data, setData] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [roleBusy, setRoleBusy] = useState("");
+  const [driveBusy, setDriveBusy] = useState("");
   const [checkingSources, setCheckingSources] = useState(false);
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [search, setSearch] = useState("");
@@ -272,6 +276,31 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
       showToast(reason instanceof Error ? reason.message : "管理者権限を変更できませんでした");
     } finally {
       setRoleBusy("");
+    }
+  }
+
+  /**
+   * 共有ドライブの許可を切り替える。
+   *
+   * ⚠️ **確認を挟む。** 許可した人は、Wikiに書かない部員が置いた資料まで
+   * 読めるようになる。押し間違いで広がると気づけない
+   */
+  async function changeDrive(target: AdminUserUsage, enabled: boolean) {
+    const action = enabled
+      ? "共有ドライブの資料を参照できるようにします"
+      : "共有ドライブの許可を解除します";
+    if (!window.confirm(`${target.username}さんに${action}。よろしいですか？`)) return;
+    setDriveBusy(target.username);
+    try {
+      await setToolGrant(target.username, "drive", enabled);
+      await refresh();
+      showToast(enabled
+        ? `${target.username}さんに共有ドライブを許可しました`
+        : `${target.username}さんの共有ドライブの許可を解除しました`);
+    } catch (reason) {
+      showToast(reason instanceof Error ? reason.message : "参照先の許可を変更できませんでした");
+    } finally {
+      setDriveBusy("");
     }
   }
 
@@ -490,20 +519,30 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
                       <th aria-sort={ariaSort("thirtyDays")}><button type="button" onClick={() => changeSort("thirtyDays")}>30日{sortMark("thirtyDays")}</button></th>
                       <th aria-sort={ariaSort("lastUsed")}><button type="button" onClick={() => changeSort("lastUsed")}>最終利用{sortMark("lastUsed")}</button></th>
                       <th>管理権限</th>
+                      <th>共有ドライブ</th>
                     </tr></thead>
                     <tbody>{users.length === 0 ? (
-                      <tr className="admin-empty-row"><td colSpan={6} className="admin-empty">該当する利用者はいません</td></tr>
+                      <tr className="admin-empty-row"><td colSpan={7} className="admin-empty">該当する利用者はいません</td></tr>
                     ) : users.map((user) => (
                       <tr key={user.username}>
                         <th data-label="Wiki利用者名">{user.username}</th><td data-label="今日">{user.today}{user.limitReached && <span className="admin-warning">上限</span>}</td><td data-label="7日">{user.sevenDays}</td><td data-label="30日">{user.thirtyDays}</td><td data-label="最終利用">{formatDateTime(user.lastUsed)}</td>
                         <td data-label="管理権限">{user.role === "owner" ? <span className="admin-role-badge">主管理者</span> : user.role === "co_admin" ? (
                           <div className="admin-role-action"><span className="admin-role-badge">共同管理者</span>{isOwner && <button type="button" disabled={roleBusy === user.username} onClick={() => void changeRole(user, false)}>解除</button>}</div>
                         ) : isOwner ? <button type="button" className="admin-link-button" disabled={roleBusy === user.username} onClick={() => void changeRole(user, true)}>共同管理者にする</button> : "—"}</td>
+                        {/* 管理者は共有フォルダの中身を決める側なので、指定しなくても読める */}
+                        <td data-label="共有ドライブ">{user.role ? <span className="admin-role-badge">管理者は利用可</span>
+                          : user.tools?.includes("drive") ? (
+                            <div className="admin-role-action"><span className="admin-role-badge">許可済み</span><button type="button" disabled={driveBusy === user.username} onClick={() => void changeDrive(user, false)}>解除</button></div>
+                          ) : <button type="button" className="admin-link-button" disabled={driveBusy === user.username} onClick={() => void changeDrive(user, true)}>許可する</button>}</td>
                       </tr>
                     ))}</tbody>
                   </table>
                 </div>
                 {!isOwner && <p className="admin-footnote">共同管理者の追加・解除は主管理者だけが行えます。</p>}
+                <p className="admin-footnote">
+                  共有ドライブはWikiに書かない部員の資料が入る場所です。許可した人だけが入力欄の「+」から参照できます。
+                  <strong>共有フォルダに「一部の部員だけが見てよい資料」を置かないでください。</strong>
+                </p>
               </section>
             </>
           )}

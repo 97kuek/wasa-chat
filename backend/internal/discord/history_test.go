@@ -195,7 +195,9 @@ type discordStub struct {
 	pages    map[string][][]Message // チャンネルID → ページ（新しい順）
 	channels []Channel
 	threads  []map[string]any
-	requests int
+	// searchHandler は検索APIの返事。設定したテストだけが使う
+	searchHandler func(*http.Request) any
+	requests      int
 	// rateLimitOnce を立てると、最初の1回だけ429を返す
 	rateLimitOnce bool
 	limited       bool
@@ -207,6 +209,14 @@ func (d *discordStub) serve(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/api/v10/guilds/{id}/channels", func(w http.ResponseWriter, _ *http.Request) {
 		d.requests++
 		_ = json.NewEncoder(w).Encode(d.channels)
+	})
+	mux.HandleFunc("/api/v10/guilds/{id}/messages/search", func(w http.ResponseWriter, r *http.Request) {
+		d.requests++
+		if d.searchHandler == nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": [][]Message{}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(d.searchHandler(r))
 	})
 	mux.HandleFunc("/api/v10/guilds/{id}/threads/active", func(w http.ResponseWriter, _ *http.Request) {
 		d.requests++

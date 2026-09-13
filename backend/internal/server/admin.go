@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/97kuek/wasa-chat/backend/internal/llm"
+	"github.com/97kuek/wasa-chat/backend/internal/pipeline"
 	"github.com/97kuek/wasa-chat/backend/internal/state"
 )
 
@@ -27,6 +29,9 @@ type adminUserView struct {
 	LastUsed     *time.Time `json:"lastUsed,omitempty"`
 	LimitReached bool       `json:"limitReached"`
 	Role         string     `json:"role,omitempty"`
+	// Tools は許可済みの参照先。誰に何を許しているかを一覧で見えるようにする。
+	// **退部時に消し忘れないため**（一人保守だと必ず起きる。docs/09 A）
+	Tools []string `json:"tools,omitempty"`
 }
 
 type adminRoleView struct {
@@ -141,12 +146,17 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rolesByName := make(map[string]string, len(s.cfg.AdminUsers)+len(dynamicRoles))
+	toolsByName := make(map[string][]string, len(dynamicRoles))
 	adminRoles := make([]adminRoleView, 0, len(s.cfg.AdminUsers)+len(dynamicRoles))
 	for _, username := range s.cfg.AdminUsers {
 		rolesByName[username] = "owner"
 		adminRoles = append(adminRoles, adminRoleView{Username: username, Role: "owner"})
 	}
 	for _, role := range dynamicRoles {
+		// 参照先の許可は、共同管理者でなくても付いている（別の許可なので先に拾う）
+		if len(role.Tools) > 0 {
+			toolsByName[role.Username] = role.Tools
+		}
 		if _, owner := rolesByName[role.Username]; owner || role.Role != "co_admin" {
 			continue
 		}
@@ -180,7 +190,11 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "利用回数を読み込めませんでした"})
 			return
 		}
-		view := adminUserView{Username: profile.Username, Role: rolesByName[profile.Username]}
+		view := adminUserView{
+			Username: profile.Username,
+			Role:     rolesByName[profile.Username],
+			Tools:    toolsByName[profile.Username],
+		}
 		for _, day := range days {
 			view.ThirtyDays += day.Used
 			if day.Day >= sevenStart {
@@ -376,23 +390,28 @@ func (s *Server) handleAdminRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		now := time.Now().UTC()
-		if err := s.state.SaveAdminRole(r.Context(), key, state.AdminRole{
-			Username: username, Role: "co_admin", GrantedBy: actor, GrantedAt: now,
-		}); err != nil {
+		// **既にある許可を消さない。** 同じ文書に参照先の許可（Tools）も入っている
+		grant, _, _ := s.state.GetAdminRole(r.Context(), key)
+		grant.Username, grant.Role, grant.GrantedBy, grant.GrantedAt = username, "co_admin", actor, now
+		if err := s.state.SaveAdminRole(r.Context(), key, grant); err != nil {
 			log.Printf("共同管理者の保存に失敗: %v", err)
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "共同管理者を追加できませんでした"})
 			return
 		}
 		s.saveAdminAudit(r.Context(), actor, "admin.role.grant", username)
 	} else {
-		if _, exists, err := s.state.GetAdminRole(r.Context(), key); err != nil {
+		grant, exists, err := s.state.GetAdminRole(r.Context(), key)
+		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "管理者ロールを読み込めませんでした"})
 			return
-		} else if !exists {
+		}
+		if !exists || grant.Role != "co_admin" {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "共同管理者ではありません"})
 			return
 		}
-		if err := s.state.DeleteAdminRole(r.Context(), key); err != nil {
+		// ⚠️ **文書ごと消さない。** 参照先の許可（Tools）も同じ文書にあるため、
+		// 消すと共同管理者を外しただけで共有ドライブの許可まで消える
+		if err := s.saveOrClearGrant(r.Context(), key, grant, ""); err != nil {
 			log.Printf("共同管理者の解除に失敗: %v", err)
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "共同管理者を解除できませんでした"})
 			return
@@ -440,4 +459,108 @@ func (s *Server) handleSourceCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	s.saveAdminAudit(r.Context(), actor, "source.check", "")
 	writeJSON(w, http.StatusOK, check)
+}
+
+// saveOrClearGrant はロールを差し替えて保存する。中身が空になったら文書ごと消す。
+//
+// 「共同管理者でもなく、使ってよい参照先も無い」文書を残すと、管理画面の一覧に
+// 空の行が並び、誰に何を許しているかが読めなくなる。
+func (s *Server) saveOrClearGrant(ctx context.Context, key string, grant state.AdminRole, role string) error {
+	grant.Role = role
+	if grant.Role == "" && len(grant.Tools) == 0 {
+		return s.state.DeleteAdminRole(ctx, key)
+	}
+	return s.state.SaveAdminRole(ctx, key, grant)
+}
+
+// handleToolGrant は、利用者が使ってよい参照先を切り替える。
+//
+// ⚠️ **共有ドライブは部内資料より緩い場所である。** Wikiに書かない人が置いた
+// 資料が入るため、誰が読めるかを個別に決める（2026-09-13にPMが判断）。
+// 共同管理者の付与と違って主管理者に限らないのは、これが日常の運用だから。
+func (s *Server) handleToolGrant(w http.ResponseWriter, r *http.Request) {
+	actor, _ := s.currentUser(r)
+	var body struct {
+		Username string `json:"username"`
+		Tool     string `json:"tool"`
+		Enabled  bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSmallRequestBodyBytes)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "リクエストが不正です"})
+		return
+	}
+	username := strings.TrimSpace(body.Username)
+	if username == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "利用者を選んでください"})
+		return
+	}
+	// **許可制なのは共有ドライブだけ。** Discordは公開チャンネルしか読まない
+	if body.Tool != pipeline.ToolDrive {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "この参照先は許可を設定できません"})
+		return
+	}
+	if s.isOwner(username) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "主管理者はもとから利用できます"})
+		return
+	}
+
+	key := s.userKey(username)
+	grant, exists, err := s.state.GetAdminRole(r.Context(), key)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "許可を読み込めませんでした"})
+		return
+	}
+	if body.Enabled {
+		// **知らない利用者へ許可を出さない。** 打ち間違いをそのまま保存すると、
+		// 誰に許可したのか分からない行が残る
+		if !exists {
+			known, err := s.knownUser(r.Context(), username)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "利用者一覧を読み込めませんでした"})
+				return
+			}
+			if !known {
+				writeJSON(w, http.StatusNotFound,
+					map[string]string{"error": "WASA Chatへログインしたことのある利用者だけを指定できます"})
+				return
+			}
+		}
+		if !slices.Contains(grant.Tools, body.Tool) {
+			grant.Tools = append(grant.Tools, body.Tool)
+		}
+		grant.Username, grant.GrantedBy, grant.GrantedAt = username, actor, time.Now().UTC()
+		if err := s.state.SaveAdminRole(r.Context(), key, grant); err != nil {
+			log.Printf("参照先の許可に失敗: %v", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "許可できませんでした"})
+			return
+		}
+		s.saveAdminAudit(r.Context(), actor, "admin.tool.grant", username+":"+body.Tool)
+	} else {
+		if !exists {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "許可されていません"})
+			return
+		}
+		grant.Tools = slices.DeleteFunc(grant.Tools, func(tool string) bool { return tool == body.Tool })
+		if err := s.saveOrClearGrant(r.Context(), key, grant, grant.Role); err != nil {
+			log.Printf("参照先の許可解除に失敗: %v", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "解除できませんでした"})
+			return
+		}
+		s.saveAdminAudit(r.Context(), actor, "admin.tool.revoke", username+":"+body.Tool)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// knownUser は WASA Chat へログインしたことのある利用者かを返す。
+func (s *Server) knownUser(ctx context.Context, username string) (bool, error) {
+	profiles, err := s.state.ListUserProfiles(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, profile := range profiles {
+		if profile.Username == username {
+			return true, nil
+		}
+	}
+	return false, nil
 }
