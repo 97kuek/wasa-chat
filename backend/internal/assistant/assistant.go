@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/97kuek/wasa-chat/backend/internal/index"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,7 +108,18 @@ func TeamMatches(want, pageTeam string) bool {
 	return false
 }
 
-var origins = map[string]bool{"": true, "wiki": true, "site": true, "fee": true}
+// origins はアシスタントが参照範囲を**狭める**ときに選べる値。
+//
+// ⚠️ **索引の出所と同じではない。** 索引には共有ドライブも入るが、
+// 共有ドライブは入力欄の「+」で**足す**ものなので、アシスタントの
+// 選択肢には出さない（足すものと狭めるものを混ぜない。2026-09-13のCodex指摘）。
+// 値そのものは index パッケージの定義を使う。
+var origins = map[string]bool{
+	"":               true,
+	index.OriginWiki: true,
+	index.OriginSite: true,
+	index.OriginFEE:  true,
+}
 
 // TeamLabel は区分の呼び方を返す。未知の値はそのまま返す
 // （build_index.py 側の分類が増えても画面が壊れないようにするため）。

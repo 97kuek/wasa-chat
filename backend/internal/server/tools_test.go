@@ -283,3 +283,52 @@ func TestDiscordIsNotAnIndexOrigin(t *testing.T) {
 		t.Fatal("参照欄での呼び名が無い")
 	}
 }
+
+// ⚠️ **「+」に出すものと、サーバーが解釈するものを一致させる。**
+// 片方だけ増やすと、押せるのに効かない（または出ないのに効く）ツールができる。
+// 2026-09-13、出所の一覧を1か所だけ更新し忘れて同じ形の穴が開いた。
+func TestToolsAndScopeAgree(t *testing.T) {
+	srv := toolServer(t, true)
+	srv.cfg.DiscordBotToken = "token"
+	srv.cfg.CalendarIDs = []string{"wasa@group.calendar.google.com"}
+
+	known := map[string]bool{
+		pipeline.ToolDrive:    true,
+		pipeline.ToolDiscord:  true,
+		pipeline.ToolCalendar: true,
+	}
+	listed := map[string]bool{}
+	for _, tool := range srv.tools(t.Context(), "主管理者") {
+		if !known[tool.ID] {
+			t.Errorf("画面に出すが、サーバーが知らないツール: %q", tool.ID)
+		}
+		listed[tool.ID] = true
+		// 名前と説明が無いと、押す前に何をするか分からない
+		if tool.Name == "" || tool.Description == "" {
+			t.Errorf("%q に名前か説明が無い: %+v", tool.ID, tool)
+		}
+		// 使えないなら理由を書く。黙って消すと「無い機能」に見える
+		if !tool.Available && tool.Reason == "" {
+			t.Errorf("%q が使えないのに理由が無い", tool.ID)
+		}
+	}
+	for id := range known {
+		if !listed[id] {
+			t.Errorf("サーバーは %q を解釈するが、画面の一覧に出ない", id)
+		}
+	}
+}
+
+// ⚠️ **ツールの名前は索引の出所と混ぜない。** 混ぜると、アシスタントの
+// 参照範囲（狭める指定）にDiscordが並ぶ
+func TestToolsAreNotIndexOrigins(t *testing.T) {
+	for _, tool := range []string{pipeline.ToolDiscord, pipeline.ToolCalendar} {
+		if pipeline.KnownOrigin(tool) {
+			t.Errorf("%q を索引の出所として通している", tool)
+		}
+	}
+	// 共有ドライブだけは索引に入る（「+」で足すが、資料としては索引にある）
+	if !pipeline.KnownOrigin(pipeline.ToolDrive) {
+		t.Error("共有ドライブが索引の出所として通らない")
+	}
+}

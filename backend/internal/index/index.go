@@ -60,7 +60,7 @@ type Page struct {
 	URL        string   `json:"url"`
 	LastEdited string   `json:"last_edited"`
 	Team       string   `json:"team"`
-	Source     string   `json:"source"` // "wiki" | "site" | "fee"。出典表示で出所を区別する
+	Source     string   `json:"source"` // OriginWiki | OriginSite | OriginFEE | OriginDrive
 	Gen        *int     `json:"gen"`
 	Chars      int      `json:"chars"`
 	IsStub     bool     `json:"is_stub"`
@@ -148,6 +148,24 @@ func siteOnlyTOC(toc string) string {
 	}
 	return toc[:wikiAt] + "\n" + site
 }
+
+// 索引に入っている資料の出所。
+//
+// ⚠️ **ここが唯一の定義。** 以前は pipeline と assistant が別々に文字列を
+// 持っており、出所を足したときに片方だけ直して穴が開いた（2026-09-13）。
+// 両方が読める一番下の層（この package）へ置く。
+//
+// ⚠️ **build_index.py の load_external_pages と同じ文字列にすること。**
+// 索引を作る側とのずれは、テスト（TestOriginsMatchBuildIndex）で見張っている。
+const (
+	OriginWiki  = "wiki"
+	OriginSite  = "site"
+	OriginFEE   = "fee"
+	OriginDrive = "drive"
+)
+
+// Origins は索引に入ってよい出所。空文字は旧い索引（当時はWikiだけ）。
+var Origins = []string{OriginWiki, OriginSite, OriginFEE, OriginDrive}
 
 // Load は dir 直下の index.json と toc.md を読み込む。
 func Load(dir string) (*Index, error) {

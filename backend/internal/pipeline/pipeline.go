@@ -735,16 +735,13 @@ func deterministicPages(ix *index.Index, question string, sc Scope) []*index.Pag
 	return out
 }
 
-// 索引に入っている資料の出所。**ここに無い値は資料として扱わない。**
-//
-// ⚠️ 既定を「Wiki」にしていたため、新しい出所を索引へ入れた瞬間に
-// **中身はDriveなのに「Wiki」と表示される**穴があった（2026-09-13にCodexが指摘）。
-// 出所が増えるときは、必ずここと OriginLabel の両方を直す。
+// 索引に入っている資料の出所。**定義は index パッケージにある。**
+// ここは呼びやすさのための別名で、値を増やすときは index 側を直す。
 const (
-	OriginWiki  = "wiki"
-	OriginSite  = "site"
-	OriginFEE   = "fee"
-	OriginDrive = "drive"
+	OriginWiki  = index.OriginWiki
+	OriginSite  = index.OriginSite
+	OriginFEE   = index.OriginFEE
+	OriginDrive = index.OriginDrive
 )
 
 // originLabels は出所を利用者に見せる名前。出所が増えるたびに分岐を書き足すと
@@ -777,15 +774,14 @@ func OriginLabel(source string) string {
 
 // KnownOrigin は**索引に入ってよい**出所かを返す。
 //
-// ⚠️ Discordは originLabels には居るが、ここでは false。参照欄に出すための
-// 呼び名を持っているだけで、索引のページとしては存在しない。
+// ⚠️ DiscordとカレンダーはoriginLabelsには居るが、ここでは false。参照欄に
+// 出すための呼び名を持っているだけで、索引のページとしては存在しない。
 // もし索引に source="discord" のページが現れたら、それは作り間違いである。
 func KnownOrigin(source string) bool {
-	if source == ToolDiscord || source == ToolCalendar {
-		return false
+	if source == "" {
+		return true // 旧い index.json には source が無い。当時はWikiだけだった
 	}
-	_, ok := originLabels[source]
-	return ok || source == ""
+	return slices.Contains(index.Origins, source)
 }
 
 // questionAllowsOrigin は「WASA Wikiにあるか」のように出所を明記した質問で、
