@@ -16,6 +16,7 @@ type Memory struct {
 	usage       map[string]int
 	usageAt     map[string]time.Time
 	profiles    map[string]UserProfile
+	settings    map[string]UserSettings
 	usageEvents map[string]UsageEvent
 	adminAudits map[string]AdminAudit
 	adminRoles  map[string]AdminRole
@@ -31,6 +32,7 @@ func NewMemory() *Memory {
 		usage:       map[string]int{},
 		usageAt:     map[string]time.Time{},
 		profiles:    map[string]UserProfile{},
+		settings:    map[string]UserSettings{},
 		usageEvents: map[string]UsageEvent{},
 		adminAudits: map[string]AdminAudit{},
 		adminRoles:  map[string]AdminRole{},
@@ -104,6 +106,29 @@ func (m *Memory) SaveUserIcon(_ context.Context, key, icon string) error {
 	return nil
 }
 
+func (m *Memory) GetUserSettings(_ context.Context, key string) (UserSettings, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	settings, ok := m.settings[key]
+	return cloneUserSettings(settings), ok, nil
+}
+
+func (m *Memory) SaveUserSettings(_ context.Context, key string, settings UserSettings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	settings.Key = key
+	m.settings[key] = cloneUserSettings(settings)
+	return nil
+}
+
+// cloneUserSettings は取り出した設定を呼び出し側が書き換えても、
+// 保存してあるものが変わらないようにする（AdminRole と同じ扱い）。
+func cloneUserSettings(settings UserSettings) UserSettings {
+	settings.Tools = slices.Clone(settings.Tools)
+	settings.DiscordGuilds = slices.Clone(settings.DiscordGuilds)
+	return settings
+}
+
 func (m *Memory) ListUserProfiles(_ context.Context) ([]UserProfile, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -156,6 +181,9 @@ func (m *Memory) PurgeUserProfiles(_ context.Context, before time.Time) (int, er
 	for key, profile := range m.profiles {
 		if profile.LastSeen.Before(before) {
 			delete(m.profiles, key)
+			// 連携設定は本番（Firestore）では同じ文書に入っており、
+			// 利用者を消せば一緒に消える。ここでも同じ結果にする
+			delete(m.settings, key)
 			removed++
 		}
 	}

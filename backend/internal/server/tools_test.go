@@ -143,8 +143,9 @@ func TestSearchableGuildsRespectsAllowList(t *testing.T) {
 	}
 }
 
-// 指定が無ければ横断するが、**代が進むほどサーバーが増える**ので上限を設ける
-func TestSearchTargetsCapsGuilds(t *testing.T) {
+// ⚠️ **連携したサーバーだけを読む。** 指定が無いときに横断していた頃は、
+// どの代の会話を読んだのかが回答からしか分からなかった（2026-09-14に変更）
+func TestSearchTargetsReadsOnlyConnectedGuilds(t *testing.T) {
 	srv := toolServer(t, false)
 	srv.cfg.DiscordBotToken = "token"
 	guilds := make([]discord.Guild, 6)
@@ -154,15 +155,23 @@ func TestSearchTargetsCapsGuilds(t *testing.T) {
 	stub := &discordGuildStub{guilds: guilds}
 	stub.serve(t)
 
-	if got := srv.searchTargets(t.Context(), ""); len(got) != MaxSearchGuilds {
+	// 連携していなければ何も読まない
+	if got := srv.searchTargets(t.Context(), nil); len(got) != 0 {
+		t.Fatalf("連携していないのに読もうとしている: %+v", got)
+	}
+	if got := srv.searchTargets(t.Context(), []string{"g2"}); len(got) != 1 || got[0].ID != "g2" {
+		t.Fatalf("連携したサーバーを読まない: %+v", got)
+	}
+	// 保存先に上限を超えた一覧が入っていても、読む数は増やさない
+	all := make([]string, len(guilds))
+	for i, guild := range guilds {
+		all[i] = guild.ID
+	}
+	if got := srv.searchTargets(t.Context(), all); len(got) != MaxSearchGuilds {
 		t.Fatalf("上限が効いていない: %d件", len(got))
 	}
-	// 指定があればそれだけ
-	if got := srv.searchTargets(t.Context(), "g2"); len(got) != 1 || got[0].ID != "g2" {
-		t.Fatalf("指定したサーバーを選べない: %+v", got)
-	}
-	// 許可していないIDを送られても何も読まない
-	if got := srv.searchTargets(t.Context(), "入っていないサーバー"); len(got) != 0 {
+	// ボットが入っていないIDが残っていても読まない
+	if got := srv.searchTargets(t.Context(), []string{"入っていないサーバー"}); len(got) != 0 {
 		t.Fatalf("許可外のサーバーを読もうとしている: %+v", got)
 	}
 }
@@ -176,12 +185,26 @@ func (d *discordGuildStub) serve(t *testing.T) {
 	mux.HandleFunc("/api/v10/users/@me/guilds", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(d.guilds)
 	})
+	// 設定画面は**選ぶ材料**（公開チャンネル数・アイコン）も取りに行く
+	mux.HandleFunc("/api/v10/guilds/{id}/channels", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]discord.Channel{
+			{ID: "c1", Type: 0, Name: "全般"},
+			{ID: "c2", Type: 0, Name: "議事録"},
+		})
+	})
+	// ⚠️ ServeMux のワイルドカードは区切りをまたげないので `{hash}.png` とは書けない
+	mux.HandleFunc("/icons/{guild}/{file}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("PNG"))
+	})
 	server := httptest.NewServer(mux)
 	discord.SetAPIBaseForTest(server.URL + "/api/v10")
+	discord.SetCDNBaseForTest(server.URL)
 	discord.ResetGuildCache()
 	t.Cleanup(func() {
 		server.Close()
 		discord.SetAPIBaseForTest("")
+		discord.SetCDNBaseForTest("")
 		discord.ResetGuildCache()
 	})
 }

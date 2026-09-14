@@ -1909,8 +1909,8 @@ select:focus-visible {
   background: var(--line-strong);
 }
 
-/* 「+」と入力欄をくっつけない。gap の3pxだけだと文字が近すぎる */
-.composer > .tool-menu { margin-right: 4px; }
+/* 印と入力欄をくっつけない。gap の3pxだけだと文字が近すぎる */
+.composer > .tool-trigger { margin-right: 4px; }
 
 .composer-actions {
   display: flex;
@@ -1919,10 +1919,7 @@ select:focus-visible {
   gap: 8px;
 }
 
-/* ---- 参照先を足す「+」 ---- */
-
-/* 押した位置から開きたいので、ここを基準にする */
-.tool-menu { position: relative; display: flex; }
+/* ---- 連携中の印（押すと設定画面へ） ---- */
 
 .tool-trigger {
   position: relative;
@@ -1951,92 +1948,27 @@ select:focus-visible {
 .tool-trigger:hover:not(:disabled) { background: var(--surface-soft); }
 .tool-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* 何かオンになっていることを、開かなくても分かるようにする */
-.tool-trigger.is-active { border-color: var(--accent); color: var(--accent); }
-
-.tool-badge {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
+/* 何かつながっていることを、設定画面を開かなくても分かるようにする。
+   ⚠️ **印が並ぶぶんだけ横に伸ばす。** 42px に詰めると、2つ目からは重ねるしか
+   なくなり、**どのサービスか分からない色の塊**になる（2026-09-14に実機で確認） */
+.tool-trigger.is-active {
+  width: auto;
+  min-width: 42px;
+  padding: 0 9px;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-/* 入力欄の上へ出す。下に出すと画面外へはみ出る（入力欄は最下部にある）。
-   ⚠️ **高さを止める。** 上へ伸びる作りなので、項目が増えたり説明が折り返したり
-   するたびに**中身が上へせり上がって**読んでいた場所が動く（2026-09-13の指摘）。
-   入りきらない分は中で送る */
-.tool-popover {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  /* ⚠️ **「+」の位置と向きを合わせる。** ボタンは入力欄の左端にあるので、
-     左端を基準にして右へ開く。右端を基準にすると幅ぶん左へ伸びて画面の外へ出る。
-     狭い画面では右へも出てしまうため、下の media query で左右とも留める */
-  left: 0;
-  z-index: 20;
+.tool-trigger-icons {
   display: flex;
-  flex-direction: column;
-  width: min(360px, calc(100vw - 40px));
-  max-height: min(58vh, 420px);
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 12%);
-}
-
-/* 見出しは止めて、一覧だけを送る */
-.tool-popover > ul {
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.tool-popover-head {
-  margin: 0 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.tool-popover ul {
-  display: grid;
+  align-items: center;
   gap: 4px;
+}
+
+.tool-trigger-icons .tool-icon {
+  width: 16px;
+  height: 16px;
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.tool-popover li {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px;
-  border-radius: 8px;
-}
-
-.tool-popover li:hover { background: var(--surface-soft); }
-
-.tool-item-text {
-  display: grid;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.tool-item-name { font-size: 13px; font-weight: 600; }
-
-/* ⚠️ **説明は2行まで。** 3行4行と折り返すと、その項目だけ背が高くなり、
-   一覧全体が上へ伸びる。全文はサポートページにある */
-.tool-item-note {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
 }
 
 /* サービスの印。名前より先に目に入る */
@@ -2047,30 +1979,168 @@ select:focus-visible {
   margin-top: 1px;
 }
 
-/* サーバーの選択はトグルの下へ収める。横に並べると名前が長いとき折り返す。
-   OSごとに外観が変わる <select> は使わず、画面と同じ部品（SelectMenu）を使う */
-.tool-item-server {
-  margin-top: 6px;
+/* ---- 設定画面（外部サービス連携） ----
+   ⚠️ 入力欄の「+」から移した（2026-09-14）。つなぐ・外す・つなぎ替えるという
+   操作は、入力欄に出す小さな一覧には収まらない */
+
+.settings-page {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 24px var(--chat-gutter) 48px;
 }
 
-.tool-item-server .select-menu-trigger {
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12px;
+.settings-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
 }
 
-/* 一覧は狭い枠の中に出るので、入りきるように幅を合わせる */
-.tool-item-server .select-menu-options {
-  min-width: 100%;
+.settings-head { display: grid; gap: 6px; max-width: 720px; }
+.settings-head h2 { margin: 0; font-size: 20px; }
+.settings-head p { margin: 0; font-size: 13px; line-height: 1.7; }
+
+/* 色はアシスタントの保存失敗（.assistant-error）と揃える。
+   同じ「保存できなかった」が画面ごとに違う色で出ると、重さが違って見える */
+.settings-error {
+  margin: 0;
+  color: #b3261e;
+  font-size: 13px;
 }
 
-.tool-unavailable {
+.settings-card {
+  display: grid;
+  gap: 12px;
+  max-width: 720px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.settings-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.settings-card-copy { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.settings-card-copy h3 { margin: 0; font-size: 15px; }
+.settings-card-copy p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+
+/* つながっているかどうかを、まず色と言葉で出す */
+.settings-state {
   flex: none;
-  padding: 3px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
   background: var(--surface-soft);
   color: var(--muted);
   font-size: 11px;
+  white-space: nowrap;
+}
+
+.settings-state.is-on { background: var(--accent-soft); color: var(--accent); }
+
+.settings-subhead {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.settings-servers {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-servers li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+/* ⚠️ **名前だけを並べない。** 「WASA 41代」「WASA 42代」と並んでも、初めて
+   設定する人には**どれが自分のサーバーか分からない**（2026-09-14の指摘）。
+   Discordで見慣れたアイコンを左に置き、人数とチャンネル数を名前の下に敷く */
+.settings-server-icon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/* アイコンが無いサーバーは頭文字で描く（アシスタント一覧と同じ考え方） */
+.settings-server-icon.is-blank {
+  display: grid;
+  place-items: center;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ⚠️ **サーバー名は途中で切らない。** 「WASA 42代」のような名前は代の数字が
+   後ろにあり、切れると**どの代か分からなくなる**（折り返して伸ばす） */
+.settings-server-name {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.settings-server-name small { color: var(--muted); font-size: 11px; }
+
+.settings-connect,
+.settings-disconnect,
+.settings-secondary {
+  flex: none;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-connect { border-color: var(--accent); color: var(--accent); }
+.settings-connect:disabled,
+.settings-disconnect:disabled,
+.settings-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.settings-empty,
+.settings-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.settings-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-invite {
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  text-decoration: none;
 }
 
 /* 見た目のスイッチ。本体はチェックボックスのままにして、
@@ -2307,14 +2377,16 @@ select:focus-visible {
     overscroll-behavior: contain;
   }
 
-  /* 「+」は入力欄の右寄りにあるので、そこから右へ360px開くと画面外へ出る。
-     入力欄の帯（.composer-area）を基準にして、左右の端を留める */
-  .tool-menu { position: static; }
-  .tool-popover {
-    left: var(--chat-gutter);
-    right: var(--chat-gutter);
-    width: auto;
-  }
+  /* ⚠️ **狭い画面では3つ目の印を出さない。** 入力欄の幅を食うほうが困る。
+     何をつないでいるかは、押した先の設定画面に全部出る */
+  .tool-trigger-icons .tool-icon:nth-child(n+3) { display: none; }
+
+  /* ⚠️ **狭い画面では、サーバー名とボタンを縦に積む。** 横に並べたままだと、
+     「WASA 42代 鳥人間プロジェクト」のような長い名前でボタンが潰れる */
+  .settings-page { padding-top: 16px; }
+  .settings-servers li { flex-wrap: wrap; }
+  .settings-connect,
+  .settings-disconnect { width: 100%; }
   .feedback-popover {
     position: fixed;
     top: 68px;

@@ -74,7 +74,10 @@ func (s *Server) discordIntegration(ctx context.Context) Integration {
 		return found
 	}
 	found.Connected = true
-	found.Summary = fmt.Sprintf("%dサーバーに接続しています", len(guilds))
+	// ⚠️ **「接続している」と「読まれる」は違う。** どのサーバーを読むかは
+	// 利用者が設定画面で選ぶ（2026-09-14）。ここに出るのはボットが入っている先で、
+	// 全員がそれを読んでいるという意味ではない
+	found.Summary = fmt.Sprintf("%dサーバーにボットが入っています（読む先は利用者が設定画面で選びます）", len(guilds))
 	for _, guild := range guilds {
 		found.Detail = append(found.Detail, guild.Name)
 	}

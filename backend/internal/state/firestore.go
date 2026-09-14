@@ -149,6 +149,47 @@ func (f *Firestore) SaveUserIcon(ctx context.Context, key, icon string) error {
 	return err
 }
 
+// GetUserSettings は外部サービス連携を読む。保存先は利用者プロフィールと同じ文書。
+//
+// **プロフィールと同じ文書に置く。** 退部時の削除（PurgeUserProfiles）で
+// 一緒に消えないと、消したはずの人の連携設定だけが残る。
+func (f *Firestore) GetUserSettings(ctx context.Context, key string) (UserSettings, bool, error) {
+	snapshot, err := f.client.Collection("users").Doc(key).Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		return UserSettings{}, false, nil
+	}
+	if err != nil {
+		return UserSettings{}, false, err
+	}
+	var settings UserSettings
+	if err := snapshot.DataTo(&settings); err != nil {
+		return UserSettings{}, false, err
+	}
+	settings.Key = snapshot.Ref.ID
+	return settings, true, nil
+}
+
+// SaveUserSettings は連携だけを書き換える。
+//
+// ⚠️ **MergeAll で書く。** Set をそのまま使うと、同じ文書にある利用者名・
+// 利用者画像・初回ログイン日時が消える。
+func (f *Firestore) SaveUserSettings(ctx context.Context, key string, settings UserSettings) error {
+	tools := settings.Tools
+	if tools == nil {
+		tools = []string{}
+	}
+	guilds := settings.DiscordGuilds
+	if guilds == nil {
+		guilds = []string{}
+	}
+	_, err := f.client.Collection("users").Doc(key).Set(ctx, map[string]any{
+		"tools":               tools,
+		"discord_guilds":      guilds,
+		"settings_updated_at": settings.UpdatedAt,
+	}, firestore.MergeAll)
+	return err
+}
+
 func (f *Firestore) ListUserProfiles(ctx context.Context) ([]UserProfile, error) {
 	snapshots, err := f.client.Collection("users").Documents(ctx).GetAll()
 	if err != nil {

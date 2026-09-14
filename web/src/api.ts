@@ -15,7 +15,7 @@ export type AssistantOrigin = "wiki" | "site" | "fee";
  * 出典の出所。
  *
  * ⚠️ **AssistantOrigin と同じにしない。** アシスタントは範囲を狭めるもので、
- * 索引に入っている資料しか選べない。一方で出典には、入力欄の「+」で足した
+ * 索引に入っている資料しか選べない。一方で出典には、設定画面でつないだ
  * 共有ドライブやDiscordも出る。同じ型に押し込むと、アシスタントの選択肢に
  * Discordが並ぶことになる（2026-09-13のCodex指摘）。
  */
@@ -104,7 +104,7 @@ export type Event =
 export type Session = { authenticated: boolean; username: string; icon?: string; remaining: number; admin: boolean };
 
 /**
- * 入力欄の「+」から足せる参照先。
+ * 設定画面の「外部サービス連携」でオン・オフする参照先。
  *
  * **引き継ぎ資料（Wiki・公式サイト・フライトシミュレータ）はここに出ない。**
  * それらは常に読むので、ここは「それ以外の置き場所」だけを並べる。
@@ -112,21 +112,91 @@ export type Session = { authenticated: boolean; username: string; icon?: string;
  * available が false のものも返る。**黙って消すと「無い機能」に見える**ので、
  * 設定が要るだけなら reason にそう書いて出す。
  */
-export type Tool = {
+export type SettingsTool = {
   id: string;
   name: string;
   description: string;
   available: boolean;
   /** available が false のときだけ入る。なぜ使えないか */
   reason?: string;
-  /** Discord のときだけ入る。**代ごとにサーバーが変わる**ので選べるようにする */
-  servers?: { id: string; name: string }[];
+  /** 利用者がオンにしているか */
+  enabled: boolean;
 };
 
-export async function tools(): Promise<Tool[]> {
-  const res = await fetch(`${API_ORIGIN}/api/tools`, { credentials: "include" });
-  if (!res.ok) return [];
+/**
+ * ボットが入っているDiscordサーバー。
+ *
+ * ⚠️ **名前だけでは選べない。**「WASA 41代」「WASA 42代」と並んでも、初めて
+ * 設定する人には**どれが自分のいるサーバーか分からない**（2026-09-14の指摘）。
+ * 見分けが付く材料（アイコン・人数）と、選んだら何を読むか（チャンネル数）を添える。
+ */
+export type DiscordServer = {
+  id: string;
+  name: string;
+  /** サーバーアイコン（data URI）。無ければ画面が頭文字で描く */
+  icon?: string;
+  /** おおよその参加人数。取れなければ入らない */
+  members?: number;
+  /** 実際に検索する公開チャンネルの数 */
+  channels?: number;
+};
+
+/**
+ * Discordの連携。
+ *
+ * ⚠️ **オン・オフのスイッチは無い。** 連携したサーバーの有無がそのまま
+ * オン・オフである。**代ごとにサーバーが変わり、つなぐ先は人によって違う**ので、
+ * 設定に1つ書いて全員へ効かせることはできない（2026-09-14の指摘）。
+ */
+export type DiscordSettings = {
+  /** 連携中のサーバー */
+  connected: DiscordServer[];
+  /** ボットが入っていて、まだ連携していないサーバー */
+  joinable: DiscordServer[];
+  /** ボットを新しいサーバーへ入れるURL。空なら設定が足りない */
+  inviteUrl?: string;
+  /** 同時に連携できるサーバーの数 */
+  maxServers: number;
+  /** 連携そのものができないときの理由 */
+  reason?: string;
+};
+
+export type Settings = { tools: SettingsTool[]; discord: DiscordSettings };
+
+/**
+ * 連携の状態を読む。
+ *
+ * `refresh` を渡すと、Discordのサーバー一覧を取り直す。**ボットを入れた直後**の
+ * ために要る（サーバー側が10分覚えているので、そのままでは出てこない）。
+ *
+ * ⚠️ **読めなかったときに空を返さない。** 空で返すと、通信に失敗しただけなのに
+ * 「連携できるサーバーはありません」と読める画面になる（つないだ覚えのある人に、
+ * 外れたと思わせる）。読めなかったことは、読めなかったと出す。
+ */
+export async function settings(refresh = false): Promise<Settings> {
+  const res = await fetch(`${API_ORIGIN}/api/settings${refresh ? "?refresh=1" : ""}`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error("連携の状態を読み込めませんでした");
   return res.json();
+}
+
+/**
+ * 連携を保存する。**保存した結果がそのまま返る。**
+ *
+ * 画面の手元の値を正としない。上限を超えた指定や、ボットが入っていない
+ * サーバーはサーバー側が断るので、返ってきたものを描き直す。
+ */
+export async function saveSettings(input: { tools: string[]; discordServers: string[] }): Promise<Settings> {
+  const res = await fetch(`${API_ORIGIN}/api/settings`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "連携を保存できませんでした");
+  return body as Settings;
 }
 
 /**
@@ -360,22 +430,20 @@ export async function ask(
   onEvent: (event: Event) => void,
   signal?: AbortSignal,
   assistantId?: string,
-  enabledTools?: string[],
-  discordServer?: string,
   context: ConversationContextTurn[] = [],
   responseMode: ResponseMode = "auto",
   attachments: string[] = [],
 ): Promise<void> {
+  // ⚠️ **参照先はここで送らない。** 外部サービス連携は設定画面に保存した
+  // 利用者ごとの設定で、サーバーが保存先から読む。送る作りだと、設定を
+  // 変えた直後の質問が古い指定のまま飛ぶ（2026-09-14に設定画面へ移した）。
+  //
   // 非公開Wikiに関する質問をURLへ載せるとアクセスログに残るため、本文で送る。
   const res = await fetch(`${API_ORIGIN}/api/ask`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      question, assistantId: assistantId ?? "", context, responseMode, attachments,
-      tools: enabledTools ?? [],
-      discordServer: discordServer ?? "",
-    }),
+    body: JSON.stringify({ question, assistantId: assistantId ?? "", context, responseMode, attachments }),
     signal,
   });
   if (!res.ok || !res.body) {

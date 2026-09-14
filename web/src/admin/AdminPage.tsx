@@ -496,7 +496,7 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
               <div className="admin-section-head">
                 <div>
                   <h3 id="admin-links-title">外部サービス連携</h3>
-                  <p>入力欄の「+」から使えるようになる置き場所です。引き継ぎ資料（Wiki・公式サイト・フライトシミュレータ）は連携なしで常に読みます。</p>
+                  <p>利用者が設定画面からつなげるようになる置き場所です。引き継ぎ資料（Wiki・公式サイト・フライトシミュレータ）は連携なしで常に読みます。</p>
                 </div>
               </div>
               <ul className="admin-links">
@@ -530,8 +530,12 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
                   </li>
                 ))}
               </ul>
+              {/* ⚠️ **「ボットが入っている」と「読まれる」は違う。**
+                  どのサーバーを読むかは利用者が設定画面で選ぶ（2026-09-14） */}
               <p className="admin-footnote">
-                Discordは新しいサーバーへボットを追加するだけで、そのサーバーも検索できるようになります。
+                Discordの一覧はボットが入っているサーバーです。実際にどれを読むかは、
+                利用者が設定画面で連携したサーバーごとに決まります。新しい代のサーバーへは、
+                そのサーバーの管理権限を持つ部員が設定画面からボットを追加できます。
                 古い代のサーバーに残しておけば、過去の代の会話も引き続き読めます。
               </p>
             </section>
@@ -593,7 +597,7 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
                 </div>
                 {!isOwner && <p className="admin-footnote">共同管理者の追加・解除は主管理者だけが行えます。</p>}
                 <p className="admin-footnote">
-                  共有ドライブはWikiに書かない部員の資料が入る場所です。許可した人だけが入力欄の「+」から参照できます。
+                  共有ドライブはWikiに書かない部員の資料が入る場所です。許可した人だけが設定画面からつなげます。
                   <strong>共有フォルダに「一部の部員だけが見てよい資料」を置かないでください。</strong>
                 </p>
               </section>

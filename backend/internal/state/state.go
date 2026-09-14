@@ -166,6 +166,32 @@ type UserProfile struct {
 	LastSeen  time.Time `json:"lastSeen" firestore:"last_seen"`
 }
 
+// UserSettings は利用者ごとの外部サービス連携。利用者プロフィールと**同じ文書**に入る。
+//
+// **端末ではなくアカウントに持つ。** 連携は「この端末でオンにした」ではなく
+// 「この人がつないだ」ものなので、別の端末やブラウザで開き直したときに
+// 外れていると、つないだつもりのまま参照されない回答が出る。
+//
+// **プロフィールと同じ文書に置くのは、消し忘れを防ぐため。** 退部時の削除
+// （PurgeUserProfiles）は利用者の文書を消す。別の入れ物にすると、
+// 消したはずの人の連携設定だけが残る（AdminRole と同じ考え方）。
+//
+// ⚠️ **DiscordGuilds は権限ではなく絞り込みである。** ボットが入っている
+// サーバーの公開チャンネルは、連携すれば誰でも読める（docs/09 A-12）。
+// 「自分のサーバーだから自分にしか見えない」ではない。
+type UserSettings struct {
+	Key string `json:"-" firestore:"-"`
+	// Tools は設定画面でオンにした参照先。
+	//
+	// ⚠️ **Discordはここに入れない。** 連携したサーバーの有無がそのまま
+	// オン・オフになる。両方を持つと「オンなのに1つも連携していない」
+	// （＝黙って何も読まない）状態が作れてしまう
+	Tools []string `json:"tools" firestore:"tools"`
+	// DiscordGuilds は検索するDiscordサーバーのID。上限は discord.MaxSearchGuilds。
+	DiscordGuilds []string  `json:"discordGuilds" firestore:"discord_guilds"`
+	UpdatedAt     time.Time `json:"updatedAt" firestore:"settings_updated_at"`
+}
+
 // DailyUsage は既存の日次上限判定用ドキュメントを管理画面でも読むための形。
 type DailyUsage struct {
 	Day       string    `json:"day" firestore:"-"`
@@ -209,7 +235,7 @@ type AdminRole struct {
 	Username string `json:"username" firestore:"username"`
 	// Role は "co_admin" か空。空でも Tools があれば、この文書は残る
 	Role string `json:"role" firestore:"role"`
-	// Tools は入力欄の「+」で使ってよい参照先。
+	// Tools は設定画面からつないでよい参照先。
 	//
 	// ⚠️ **共有ドライブは部内資料より緩い場所である。** Wikiに書かない人が
 	// 置いた資料が入るため、誰が読めるかを個別に決める（2026-09-13にPMが判断）。
@@ -254,6 +280,10 @@ type Store interface {
 	GetUserProfile(context.Context, string) (UserProfile, bool, error)
 	SaveUserIcon(context.Context, string, string) error
 	ListUserProfiles(context.Context) ([]UserProfile, error)
+	// GetUserSettings/SaveUserSettings は外部サービス連携を読み書きする。
+	// 保存先は利用者プロフィールと同じ文書で、ほかの項目は壊さない。
+	GetUserSettings(context.Context, string) (UserSettings, bool, error)
+	SaveUserSettings(context.Context, string, UserSettings) error
 	ListDailyUsage(context.Context, string, string) ([]DailyUsage, error)
 	PurgeDailyUsage(context.Context, string, string) (int, error)
 	PurgeUserProfiles(context.Context, time.Time) (int, error)

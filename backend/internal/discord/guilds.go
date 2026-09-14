@@ -2,7 +2,10 @@ package discord
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -27,9 +30,17 @@ const guildCacheTTL = 10 * time.Minute
 const MaxSearchGuilds = 3
 
 // Guild はボットが入っているサーバー。
+//
+// ⚠️ **名前だけでは選べない。** 「WASA 41代」「WASA 42代」と並んでも、初めて
+// 設定する人には**どれが自分のいるサーバーか分からない**（2026-09-14の指摘）。
+// 見分けが付く材料（アイコン・人数）を一緒に持つ。
 type Guild struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Icon はDiscordのアイコンのハッシュ。空なら設定されていない
+	Icon string `json:"icon"`
+	// MemberCount はおおよその参加人数（with_counts で取れる）
+	MemberCount int `json:"approximate_member_count"`
 }
 
 var (
@@ -57,7 +68,8 @@ func ListGuilds(ctx context.Context, botToken string) []Guild {
 	guildCacheMu.Unlock()
 
 	var guilds []Guild
-	if err := (&fetcher{token: botToken}).get(ctx, apiBase+"/users/@me/guilds", &guilds); err != nil {
+	// with_counts を付けると参加人数が一緒に返る。**リクエストは増えない**
+	if err := (&fetcher{token: botToken}).get(ctx, apiBase+"/users/@me/guilds?with_counts=true", &guilds); err != nil {
 		// 一覧が取れないだけ。**古い一覧を返すより空を返す**
 		// （消えたサーバーを選ばせて、後で失敗させるほうが分かりにくい）
 		return nil
@@ -71,7 +83,100 @@ func ListGuilds(ctx context.Context, botToken string) []Guild {
 	return guilds
 }
 
-// ResetGuildCache はテスト用。本番からは呼ばない。
+// アイコンは**中継してから画面へ渡す**。
+//
+// ⚠️ **画面から cdn.discordapp.com を直接読めない。** CSPが
+// `img-src 'self' data:` なので、外部ホストの画像は表示できない
+// （docs/04）。アシスタントのアイコンと同じく data URI にして渡す。
+const (
+	iconCacheTTL = time.Hour
+	// アイコンは64pxのPNG。**上限を設ける**（読み込む側の上限でもある）
+	maxIconBytes = 64 << 10
+	iconTimeout  = 2 * time.Second
+)
+
+var cdnBase = "https://cdn.discordapp.com"
+
+var (
+	iconCacheMu sync.Mutex
+	iconCache   = map[string]cachedIcon{}
+)
+
+type cachedIcon struct {
+	dataURL string
+	at      time.Time
+}
+
+// IconDataURL はサーバーのアイコンを data URI で返す。取れなければ空。
+//
+// ⚠️ **BOTトークンを付けない。** 宛先はDiscord APIではなく画像の配信元で、
+// 認証も要らない。付ければ、トークンを別のホストへ渡すだけになる。
+//
+// ⚠️ **取れなくても画面は出す。** アイコンは見分けを助けるためのもので、
+// 無ければ画面側が名前の頭文字で描く。
+func IconDataURL(ctx context.Context, guild Guild) string {
+	if guild.Icon == "" {
+		return ""
+	}
+	key := guild.ID + "/" + guild.Icon
+	iconCacheMu.Lock()
+	if hit, ok := iconCache[key]; ok && time.Since(hit.at) < iconCacheTTL {
+		iconCacheMu.Unlock()
+		return hit.dataURL
+	}
+	iconCacheMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, iconTimeout)
+	defer cancel()
+	url := fmt.Sprintf("%s/icons/%s/%s.png?size=64", cdnBase, guild.ID, guild.Icon)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return ""
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxIconBytes+1))
+	if err != nil || len(body) > maxIconBytes {
+		return ""
+	}
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(body)
+
+	iconCacheMu.Lock()
+	iconCache[key] = cachedIcon{dataURL: dataURL, at: time.Now()}
+	iconCacheMu.Unlock()
+	return dataURL
+}
+
+// SetCDNBaseForTest はアイコンの取得先を差し替える。**テストと手元の確認だけ。**
+func SetCDNBaseForTest(base string) {
+	if base == "" {
+		cdnBase = "https://cdn.discordapp.com"
+		return
+	}
+	cdnBase = base
+	iconCacheMu.Lock()
+	iconCache = map[string]cachedIcon{}
+	iconCacheMu.Unlock()
+}
+
+// RefreshGuilds は覚えていた一覧を捨てて取り直す。
+//
+// **ボットを入れた直後のために要る。** 一覧は10分覚えているので、設定画面で
+// 「サーバーへ追加」を押して戻ってきた人には、追加したサーバーがまだ見えない。
+// 「入れたのに出てこない」は、入れ直しを何度も試させることになる
+// （2026-09-14の指摘）。押されたときだけ取り直す。
+func RefreshGuilds(ctx context.Context, botToken string) []Guild {
+	ResetGuildCache()
+	return ListGuilds(ctx, botToken)
+}
+
+// ResetGuildCache は覚えていた一覧を捨てる。テストと RefreshGuilds から呼ぶ。
 func ResetGuildCache() {
 	guildCacheMu.Lock()
 	guildCache.guilds, guildCache.at = nil, time.Time{}

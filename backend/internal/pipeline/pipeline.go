@@ -273,7 +273,7 @@ func scopedTOC(ix *index.Index, sc Scope) string {
 // **2つの向きが混ざる場所である。**
 //
 //   - Assistant は範囲を**狭める**（アシスタントの参照範囲。docs/09 D-5）
-//   - Drive は既定で読まないものを**足す**（入力欄の「+」）
+//   - Drive は既定で読まないものを**足す**（設定画面の外部サービス連携）
 //
 // 実効範囲は「アシスタントが許す最大範囲 ∩ この会話で足した参照先」になる。
 // **画面の指定だけを信じない。** 足すほうもここで判定するので、クライアントが
@@ -421,7 +421,7 @@ func (p *Pipeline) RunWithMode(ctx context.Context, question string, history []C
 	return p.run(ctx, question, history, Scope{Assistant: assistant}, requested, nil, emit)
 }
 
-// RunInScope は参照先（入力欄の「+」）を指定して回答する。
+// RunInScope は参照先（設定画面でつないだ外部サービス）を指定して回答する。
 func (p *Pipeline) RunInScope(ctx context.Context, question string, history []ConversationTurn, scope Scope, requested ResponseMode, images []llm.Image, emit func(Event)) error {
 	return p.run(ctx, question, history, scope, requested, images, emit)
 }
@@ -1233,7 +1233,7 @@ func extractJSON(s string) string {
 	return s
 }
 
-// 入力欄の「+」で足せる参照先。**索引の origin とは別の概念である。**
+// 設定画面でつないで足せる参照先。**索引の origin とは別の概念である。**
 //
 // origin（wiki / site / fee / drive）は索引に入っている資料の出所で、
 // アシスタントの参照範囲はそれを**狭める**。ここに並ぶのは「既定では読まない

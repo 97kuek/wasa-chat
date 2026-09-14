@@ -127,7 +127,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/tools", s.requireAdmin(s.handleToolGrant))
 	mux.HandleFunc("GET /api/admin/integrations", s.requireAdmin(s.handleIntegrations))
 	mux.HandleFunc("POST /api/admin/source-check", s.requireAdmin(s.handleSourceCheck))
-	mux.HandleFunc("GET /api/tools", s.requireAuth(s.handleTools))
+	// 外部サービス連携は**利用者ごと**の設定。入力欄の「+」ではなく設定画面から
+	// 変える（2026-09-14に人間が判断。internal/server/settings.go）
+	mux.HandleFunc("GET /api/settings", s.requireAuth(s.handleSettings))
+	mux.HandleFunc("PUT /api/settings", s.requireAuth(s.handleSaveSettings))
 	mux.HandleFunc("GET /api/assistants", s.requireAuth(s.handleListAssistants))
 	mux.HandleFunc("POST /api/assistants", s.requireAuth(s.handleCreateAssistant))
 	mux.HandleFunc("PUT /api/assistants/{id}", s.requireAuth(s.handleUpdateAssistant))
@@ -727,11 +730,10 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		Context      []pipeline.ConversationTurn `json:"context"`
 		// data URI の配列。画面側が長辺768pxのJPEGへ落としてから送る
 		Attachments []string `json:"attachments"`
-		// Tools は入力欄の「+」で足した参照先。引き継ぎ資料は常に読むので
-		// ここには入らない（**足す**ものだけ）
-		Tools []string `json:"tools"`
-		// DiscordServer は検索するDiscordサーバー。空なら新しい代から横断する
-		DiscordServer string `json:"discordServer"`
+		// ⚠️ **参照先はここで受け取らない。** 外部サービス連携は設定画面で
+		// 保存した利用者ごとの設定であり、質問ごとの指定ではない。
+		// 画面から送らせると、設定を変えた直後に古い指定で質問が飛ぶ
+		// （2026-09-14に設定画面へ移した。internal/server/settings.go）
 	}
 	if err := decodeJSON(w, r, maxAskBodyBytes, &body); err != nil {
 		writeJSON(w, invalidJSONStatus(err), map[string]string{"error": "リクエストが不正です"})
@@ -846,10 +848,12 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	// ⚠️ **実効範囲はサーバーが決める。** 画面から届いた参照先は「足す」指定で、
+	// ⚠️ **実効範囲はサーバーが決める。** 設定画面でつないだ参照先は「足す」指定で、
 	// アシスタントの参照範囲（狭める指定）と合成した結果だけが使われる。
-	// 画面の指定をそのまま信じると、範囲外の資料が読まれる（2026-09-13のCodex）
-	tools := s.allowedTools(r.Context(), user, body.Tools)
+	// 保存してある連携をそのまま信じると、あとで外れた許可が効き続ける
+	// （2026-09-13のCodex）。使ってよいかは質問のたびに allowedTools が決める
+	saved := s.userSettings(r.Context(), userKey)
+	tools := s.allowedTools(r.Context(), user, enabledTools(saved))
 	scope := pipeline.NewScope(selected, tools)
 	if slices.Contains(tools, pipeline.ToolCalendar) {
 		scope.CalendarLog, scope.CalendarNote, scope.CalendarSources = s.readCalendar(r.Context())
@@ -864,7 +868,7 @@ func (s *Server) handleAsk(w http.ResponseWriter, r *http.Request) {
 			previous = body.Context[len(body.Context)-1].Question
 		}
 		scope.DiscordLog, scope.DiscordNote, scope.DiscordSources =
-			s.searchDiscordFor(r.Context(), question, previous, body.DiscordServer)
+			s.searchDiscordFor(r.Context(), question, previous, saved.DiscordGuilds)
 	}
 	if err := s.pipe.RunInScope(r.Context(), question, body.Context, scope, responseMode, images, emit); err != nil {
 		log.Printf("質問の処理に失敗: %v", err)

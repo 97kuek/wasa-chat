@@ -10,18 +10,19 @@ import {
   logout,
   saveChat,
   session,
+  settings as fetchSettings,
+  saveSettings,
   submitFeedback,
   updateAssistant,
-  tools as fetchTools,
   updateProfileIcon,
   type Assistant,
   type AssistantDraft,
   type ScopeCounts,
   type Chat,
   type FeedbackReason,
+  type Settings,
   type StageTimingName,
   type Team,
-  type Tool,
   type Turn,
 } from "./api";
 import { stripCitation } from "./answer";
@@ -32,7 +33,8 @@ import { AssistantSettingsForm, type AssistantFormMode } from "./assistant/Setti
 import { LoadingScreen } from "./components/LoadingScreen";
 import { ReferenceSummary } from "./components/ReferenceSummary";
 import { SelectMenu, type SelectOption } from "./components/SelectMenu";
-import { ToolMenu } from "./components/ToolMenu";
+import { ToolIcon } from "./components/ToolIcon";
+import { SettingsPage } from "./settings/SettingsPage";
 import { Spinner } from "./components/Spinner";
 import { Toast } from "./components/Toast";
 import {
@@ -92,10 +94,9 @@ type Announcement = {
 
 const ANNOUNCEMENT_READ_KEY = "wasa-chat-read-announcements";
 const ASSISTANT_KEY = "wasa-chat-assistant";
-/** 「+」で足した参照先。次に開いたときも同じ状態にしたいので覚えておく */
-const TOOLS_KEY = "wasa-chat-tools";
-/** 検索するDiscordのサーバー。代ごとに変わるので覚えておく */
-const DISCORD_SERVER_KEY = "wasa-chat-discord-server";
+/* ⚠️ 外部サービス連携は端末に覚えない。**アカウントに持つ**（設定画面で保存し、
+   サーバー側が質問のたびに読む）。端末ごとだと、別の端末やブラウザで開いたときに
+   つないだはずの連携が黙って外れる（2026-09-14に設定画面へ移した） */
 const ASSISTANT_FAVORITES_KEY = "wasa-chat-assistant-favorites";
 const ASSISTANT_SORT_KEY = "wasa-chat-assistant-sort";
 function resizeComposerTextarea(target: HTMLTextAreaElement | null): void {
@@ -143,7 +144,6 @@ const makeId = () => crypto.randomUUID();
 
 const loadReadAnnouncementIds = () => readStoredIds(ANNOUNCEMENT_READ_KEY);
 const loadFavoriteAssistantIds = () => readStoredIds(ASSISTANT_FAVORITES_KEY);
-const loadEnabledTools = () => readStoredIds(TOOLS_KEY);
 
 function loadAssistantSort(): AssistantSort {
   const saved = readStored("local", ASSISTANT_SORT_KEY);
@@ -212,13 +212,15 @@ export default function App() {
   // 選んだアシスタントは端末に覚える。毎回選び直させると、結局
   // 誰も使わない機能になる（サーバーに持つほどの情報でもない）
   const [assistantId, setAssistantId] = useState(() => readStored("local", ASSISTANT_KEY) ?? "");
-  const [availableTools, setAvailableTools] = useState<Tool[]>([]);
-  const [enabledTools, setEnabledTools] = useState<string[]>(loadEnabledTools);
-  const [discordServer, setDiscordServer] = useState(() => readStored("local", DISCORD_SERVER_KEY) ?? "");
-  // チャット画面とアシスタント一覧を切り替える。モーダルではなく画面ごと
-  // 差し替えるのは、一覧が「選ぶ場所」であって会話の付随物ではないため
-  const [view, setView] = useState<"chat" | "assistants" | "admin">(
-    () => location.pathname === "/admin" ? "admin" : "chat",
+  // 外部サービス連携。**サーバーが持つ**ので、読み込むまでは null
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState("");
+  const [settingsError, setSettingsError] = useState("");
+  const [serversRefreshing, setServersRefreshing] = useState(false);
+  // チャット画面・アシスタント一覧・設定を切り替える。モーダルではなく画面ごと
+  // 差し替えるのは、どれも「決める場所」であって会話の付随物ではないため
+  const [view, setView] = useState<"chat" | "assistants" | "settings" | "admin">(
+    () => location.pathname === "/admin" ? "admin" : location.pathname === "/settings" ? "settings" : "chat",
   );
   // 一覧の中で作成／編集／閲覧画面を開いているか。閲覧は他人の設定にも使う。
   const [assistantForm, setAssistantForm] = useState<{ mode: AssistantFormMode; assistantId?: string } | null>(null);
@@ -252,6 +254,18 @@ export default function App() {
     : undefined;
   const assistantFormReadOnly = assistantForm?.mode === "view";
   const activeChat = chats.find((chat) => chat.id === activeChatId);
+  /**
+   * いま連携している参照先。入力欄の印に使う。
+   *
+   * ⚠️ **Discordは連携したサーバーの有無で決まる**（オン・オフを別に持たない）。
+   * 使えなくなったものは出さない。印だけ残ると、読んでいるつもりで読んでいない。
+   */
+  const connectedTools = [
+    ...(settings && settings.discord.connected.length > 0 ? [{ id: "discord", name: "Discord" }] : []),
+    ...(settings?.tools ?? [])
+      .filter((tool) => tool.enabled && tool.available)
+      .map((tool) => ({ id: tool.id, name: tool.name })),
+  ];
   const streaming = chats.some((chat) => chat.turns.some((turn) => turn.streaming));
   const unreadCount = announcements.filter((announcement) => !readAnnouncementIds.includes(announcement.id)).length;
   const historySections = groupChats(chats);
@@ -311,11 +325,20 @@ export default function App() {
 	useEffect(() => {
 		const followPath = () => {
 			if (location.pathname === "/admin" && isAdmin) setView("admin");
-			else if (view === "admin") setView("chat");
+			else if (location.pathname === "/settings") setView("settings");
+			else if (view === "admin" || view === "settings") setView("chat");
 		};
 		window.addEventListener("popstate", followPath);
 		return () => window.removeEventListener("popstate", followPath);
 	}, [isAdmin, view]);
+
+	// 設定画面から出たらURLも戻す。**出口を1か所にまとめる**（チャットへ戻る道は
+	// 新しいチャット・履歴・アシスタントと複数あり、各所へ書くと必ず漏れる）
+	useEffect(() => {
+		if (view !== "settings" && location.pathname === "/settings") {
+			history.replaceState(null, "", "/");
+		}
+	}, [view]);
 
   useEffect(() => {
     fetch("/announcements.json")
@@ -493,11 +516,11 @@ export default function App() {
    * ログイン後に読み直すもの。
    *
    * **起動時（セッション復元）とログイン直後で同じ関数を通す。** 以前は2か所へ
-   * 並べて書いており、参照先の一覧（「+」）を片方だけに足していたため、
-   * **一度ログインしたまま開き直すと「+」が消えていた**（2026-09-13に発覚）。
+   * 並べて書いており、連携の読み込みを片方だけに足していたため、
+   * **一度ログインしたまま開き直すと連携が消えていた**（2026-09-13に発覚）。
    */
   async function restoreAfterSignIn() {
-    await Promise.all([restoreHistory(), refreshAssistants(), refreshTools()]);
+    await Promise.all([restoreHistory(), refreshAssistants(), refreshSettings()]);
   }
 
   async function handleLogout() {
@@ -557,6 +580,22 @@ export default function App() {
 	function closeAdmin() {
 		history.pushState(null, "", "/");
 		setView("chat");
+	}
+
+	/**
+	 * 設定画面を開く。
+	 *
+	 * **URLを持たせる。** 「設定はここ」と人に伝えられるようにするためと、
+	 * 戻るボタンでチャットへ戻れるようにするため（管理画面と同じ作り）。
+	 */
+	function openSettings() {
+		setProfileOpen(false);
+		setSettingsError("");
+		// 開くたびに読み直す。管理者が許可を出した直後でも、開けば最新になる
+		void refreshSettings();
+		if (location.pathname !== "/settings") history.pushState(null, "", "/settings");
+		setView("settings");
+		closeSidebarOnMobile();
 	}
 
   function handleNoticeToggle() {
@@ -801,17 +840,89 @@ export default function App() {
     }
   }
 
-  // 参照先は**サーバーが決める**。画面に固定で並べると、未設定のものが
-  // 押せてしまい「押したのに効かない」になる（available と reason を返す）
-  async function refreshTools() {
-    const list = await fetchTools().catch(() => [] as Tool[]);
-    setAvailableTools(list);
-    // 使えなくなったものをオンのまま残さない。表示と実際の参照先が食い違う
-    setEnabledTools((current) => current.filter((id) => list.some((tool) => tool.id === id && tool.available)));
-    // 選んでいたDiscordサーバーが無くなっていたら「すべて」へ戻す。
-    // 消えたサーバーを指したままだと、検索しても毎回0件になる
-    const servers = list.find((tool) => tool.id === "discord")?.servers ?? [];
-    setDiscordServer((current) => (current && !servers.some((server) => server.id === current) ? "" : current));
+  /**
+   * 連携の状態を読み直す。
+   *
+   * **使えるかどうかも、つないである先も、サーバーが決める。** 画面に固定で
+   * 並べると、未設定のものが押せてしまい「つないだのに効かない」になる。
+   */
+  async function refreshSettings() {
+    try {
+      setSettings(await fetchSettings());
+      setSettingsError("");
+    } catch (error) {
+      // 読めなかったことは、読めなかったと出す。空の一覧を出すと、
+      // つないだ覚えのある人に「外れた」と思わせる
+      setSettings(null);
+      setSettingsError(error instanceof Error ? error.message : "連携の状態を読み込めませんでした");
+    }
+  }
+
+  /** 連携を保存する。**保存した結果で描き直す**（画面の手元の値を正としない）。 */
+  async function applySettings(next: { tools: string[]; discordServers: string[] }, busyId: string, done: string) {
+    setSettingsBusy(busyId);
+    setSettingsError("");
+    try {
+      setSettings(await saveSettings(next));
+      showToast(done);
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "連携を保存できませんでした");
+    } finally {
+      setSettingsBusy("");
+    }
+  }
+
+  /** いま保存してある連携から、画面へ出す一覧を作る。Discordは連携の有無で決まる */
+  function currentConnections(): { tools: string[]; discordServers: string[] } {
+    return {
+      tools: (settings?.tools ?? []).filter((tool) => tool.enabled).map((tool) => tool.id),
+      discordServers: (settings?.discord.connected ?? []).map((server) => server.id),
+    };
+  }
+
+  function toggleTool(id: string, enabled: boolean) {
+    const current = currentConnections();
+    const name = settings?.tools.find((tool) => tool.id === id)?.name ?? id;
+    void applySettings(
+      { ...current, tools: enabled ? [...current.tools, id] : current.tools.filter((tool) => tool !== id) },
+      id,
+      enabled ? `${name}を参照するようにしました` : `${name}の参照をやめました`,
+    );
+  }
+
+  function connectDiscordServer(id: string) {
+    const current = currentConnections();
+    const name = settings?.discord.joinable.find((server) => server.id === id)?.name ?? id;
+    void applySettings(
+      { ...current, discordServers: [...current.discordServers, id] },
+      id,
+      `「${name}」を検索先に追加しました`,
+    );
+  }
+
+  function disconnectDiscordServer(id: string) {
+    const current = currentConnections();
+    const name = settings?.discord.connected.find((server) => server.id === id)?.name ?? id;
+    void applySettings(
+      { ...current, discordServers: current.discordServers.filter((server) => server !== id) },
+      id,
+      `「${name}」を検索先から外しました`,
+    );
+  }
+
+  /** ボットを入れた直後のための取り直し。サーバー側が一覧を10分覚えている */
+  async function refreshDiscordServers() {
+    setServersRefreshing(true);
+    try {
+      setSettings(await fetchSettings(true));
+      setSettingsError("");
+    } catch {
+      // ⚠️ **取り直しに失敗しても、いま出ている一覧は消さない。**
+      // 消すと、連携中のサーバーまで画面から消えて外れたように見える
+      setSettingsError("サーバーの一覧を取り直せませんでした");
+    } finally {
+      setServersRefreshing(false);
+    }
   }
 
   async function refreshAssistants() {
@@ -1167,7 +1278,7 @@ export default function App() {
           patch((current) => ({ ...current, streaming: false, status: "", retryAt: undefined }));
           break;
       }
-      }, controller.signal, assistantId, enabledTools, discordServer, context, responseMode, sent ? [sent.dataUrl] : []);
+      }, controller.signal, assistantId, context, responseMode, sent ? [sent.dataUrl] : []);
     } catch (error) {
       // fetch自体の失敗やストリームの切断は ask() の中でイベントにならない。
       // ここで拾わないと streaming が立ったままになり、入力欄が永久に
@@ -1414,7 +1525,11 @@ export default function App() {
             <button type="button" className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} aria-label="チャット履歴を開く" aria-expanded={sidebarOpen}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
             </button>
-            <h1>{view === "assistants" ? "アシスタント" : activeChat?.title ?? "新しいチャット"}</h1>
+            <h1>
+              {view === "assistants" ? "アシスタント"
+                : view === "settings" ? "設定"
+                : activeChat?.title ?? "新しいチャット"}
+            </h1>
           </div>
           <div className="header-actions" ref={headerMenus}>
             <div className="header-menu-wrap">
@@ -1514,6 +1629,9 @@ export default function App() {
                     {profileIconBusy ? "画像を保存中…" : profileIcon ? "利用者画像を変更" : "利用者画像を設定"}
                   </button>
                   {profileIcon && <button type="button" disabled={profileIconBusy} onClick={() => void removeProfileIcon()}>利用者画像を外す</button>}
+                  {/* 外部サービス連携の入口。**利用者ごとの設定**なので、
+                      管理画面ではなくここに置く（2026-09-14） */}
+                  <button type="button" onClick={openSettings}>設定（外部サービス連携）</button>
                   <a href={APP_URLS.wiki} target="_blank" rel="noreferrer noopener">WASA Wikiを開く</a>
                   <a href={APP_URLS.support} target="_blank" rel="noreferrer noopener">ヘルプとポリシー</a>
 									{isAdmin && <button type="button" onClick={openAdmin}>管理画面</button>}
@@ -1524,7 +1642,18 @@ export default function App() {
           </div>
         </header>
 
-        {view === "assistants" ? (
+        {view === "settings" ? (
+          <SettingsPage
+            settings={settings}
+            busy={settingsBusy}
+            error={settingsError}
+            refreshing={serversRefreshing}
+            onToggleTool={toggleTool}
+            onConnectServer={connectDiscordServer}
+            onDisconnectServer={disconnectDiscordServer}
+            onRefreshServers={() => void refreshDiscordServers()}
+          />
+        ) : view === "assistants" ? (
           <main className="assistant-page">
             {assistantForm ? (
               <AssistantSettingsForm
@@ -1762,22 +1891,31 @@ export default function App() {
               handleAsk(question);
             }}
           >
-            {/* 参照先を足す「+」は入力欄の**左**。文字を打つ前に決めるものなので、
-                送信・添付（右側の操作）とは役割が違う（2026-09-13の指摘） */}
-            <ToolMenu
-              tools={availableTools}
-              enabled={enabledTools}
-              onChange={(next) => {
-                setEnabledTools(next);
-                writeStored("local", TOOLS_KEY, JSON.stringify(next));
-              }}
-              discordServer={discordServer}
-              onDiscordServerChange={(id) => {
-                setDiscordServer(id);
-                writeStored("local", DISCORD_SERVER_KEY, id);
-              }}
-              disabled={streaming}
-            />
+            {/* ⚠️ **ここでは切り替えない。** 連携は設定画面で決めるものへ変えた
+                （2026-09-14）。ただし、いま何をつないでいるかは**開かなくても
+                分かる**ようにする。黙って外部を読むのと、黙って読まないのは
+                どちらも困る。押すと設定画面へ行く */}
+            <button
+              type="button"
+              className={`tool-trigger${connectedTools.length > 0 ? " is-active" : ""}`}
+              aria-label={connectedTools.length > 0
+                ? `連携中: ${connectedTools.map((tool) => tool.name).join("・")}（設定を開く）`
+                : "外部サービスと連携（設定を開く）"}
+              title={connectedTools.length > 0
+                ? `連携中: ${connectedTools.map((tool) => tool.name).join("・")}`
+                : "外部サービスと連携"}
+              onClick={openSettings}
+            >
+              {connectedTools.length === 0 ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              ) : (
+                <span className="tool-trigger-icons" aria-hidden="true">
+                  {connectedTools.map((tool) => <ToolIcon key={tool.id} id={tool.id} />)}
+                </span>
+              )}
+            </button>
             <textarea
               ref={questionInput}
               value={question}

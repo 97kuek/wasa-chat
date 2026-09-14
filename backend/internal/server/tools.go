@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"log"
-	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -13,10 +12,13 @@ import (
 	"github.com/97kuek/wasa-chat/backend/internal/pipeline"
 )
 
-// Tool は入力欄の「+」から足せる参照先。
+// Tool は設定画面の「外部サービス連携」から足せる参照先。
 //
 // **引き継ぎ資料（Wiki・公式サイト・フライトシミュレータ）はここに出ない。**
 // それらは常に読むので、ここは「それ以外の置き場所」だけを並べる。
+//
+// 画面へ出す形（利用者ごとのオン・オフや連携中のサーバー）は settings.go で
+// 組み立てる。ここは**サーバー側で使えるかどうか**だけを持つ。
 type Tool struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -33,19 +35,20 @@ type Tool struct {
 }
 
 // ToolServer は選べるDiscordのサーバー。
+//
+// ⚠️ **名前だけを並べない。** 「WASA 41代」「WASA 42代」と4つ並んでも、
+// 初めて設定する人には**どれが自分のいるサーバーか分からない**（2026-09-14の指摘）。
+// 見分けが付く材料と、選んだときに何が読まれるかを一緒に返す。
 type ToolServer struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-}
-
-// handleTools は参照先の一覧を返す。
-//
-// **画面に固定で並べない。** 未設定のものが押せてしまうと「押したのに効かない」
-// になるため、使えるかどうかはサーバーが決めて返す。
-// 使えるかどうかは**利用者ごとに違う**（共有ドライブは許可制）。
-func (s *Server) handleTools(w http.ResponseWriter, r *http.Request) {
-	user, _ := s.currentUser(r)
-	writeJSON(w, http.StatusOK, s.tools(r.Context(), user))
+	// Icon はDiscordのサーバーアイコン（data URI）。無ければ画面が頭文字で描く
+	Icon string `json:"icon,omitempty"`
+	// Members はおおよその参加人数。0なら取れなかった（出さない）
+	Members int `json:"members,omitempty"`
+	// Channels は**実際に検索する**公開チャンネルの数。
+	// DISCORD_SEARCH_CHANNELS で絞っていれば、その数になる
+	Channels int `json:"channels,omitempty"`
 }
 
 // mayUseDrive は共有ドライブを読んでよい利用者かを返す。
@@ -161,9 +164,9 @@ const MaxSearchGuilds = discord.MaxSearchGuilds
 //
 // DISCORD_SEARCH_CHANNELS を設定すると、さらにそのチャンネルだけへ絞れる。
 //
-// guildID が空なら横断するが、**どのサーバーが選ばれるかは名前順**である
-// （searchTargets 参照）。代を指定したいときは画面のサーバー選択で明示する。
-func (s *Server) searchDiscordFor(ctx context.Context, question, previous, guildID string) (transcript, note string, sources []pipeline.Source) {
+// guildIDs は設定画面で**利用者が連携したサーバー**。空なら何も読まない
+// （searchTargets 参照）。
+func (s *Server) searchDiscordFor(ctx context.Context, question, previous string, guildIDs []string) (transcript, note string, sources []pipeline.Source) {
 	if s.cfg.DiscordBotToken == "" {
 		return "", "", nil
 	}
@@ -176,7 +179,7 @@ func (s *Server) searchDiscordFor(ctx context.Context, question, previous, guild
 	ctx, cancel := context.WithTimeout(ctx, discordSearchTimeout)
 	defer cancel()
 
-	targets := s.searchTargets(ctx, guildID)
+	targets := s.searchTargets(ctx, guildIDs)
 	if len(targets) == 0 {
 		return "", "", nil
 	}
@@ -244,23 +247,30 @@ func discordSource(guildID string, log discord.ChannelLog) pipeline.Source {
 
 // searchTargets は検索するサーバーを決める。
 //
-// 指定が無ければ横断するが、**代が進むほどサーバーが増える**ので上限を設ける。
-// 一覧は名前順なので、新しい代が上に来る名前付けをしてもらう前提にしない。
-// 指定があればそれだけ（許可した一覧に無ければ何もしない）。
-func (s *Server) searchTargets(ctx context.Context, guildID string) []discord.Guild {
+// ⚠️ **指定が無ければ何も読まない。** 以前は指定が無いと名前順で先頭3つを
+// 横断していたが、どの代の会話を読んだのかが回答からしか分からなかった。
+// いまは設定画面で**連携したサーバーだけ**を読む（2026-09-14に変更）。
+//
+// 連携時にも上限を掛けているが（connectableGuilds）、ここでも掛ける。
+// 古い設定や保存先の書き換えで、上限を超えた一覧が入っていることがある。
+func (s *Server) searchTargets(ctx context.Context, guildIDs []string) []discord.Guild {
+	if len(guildIDs) == 0 {
+		return nil
+	}
 	guilds := s.searchableGuilds(ctx)
-	if guildID == "" {
-		if len(guilds) > MaxSearchGuilds {
-			return guilds[:MaxSearchGuilds]
-		}
-		return guilds
-	}
+	targets := make([]discord.Guild, 0, len(guildIDs))
 	for _, guild := range guilds {
-		if guild.ID == guildID {
-			return []discord.Guild{guild}
+		// ⚠️ **連携した一覧に無いものは読まない。** ボットが外された、
+		// DISCORD_GUILD_IDS で絞られた、のどちらでもここで落ちる
+		if !slices.Contains(guildIDs, guild.ID) {
+			continue
 		}
+		if len(targets) == MaxSearchGuilds {
+			break
+		}
+		targets = append(targets, guild)
 	}
-	return nil
+	return targets
 }
 
 // searchableGuilds は画面から検索してよいサーバーを返す。
