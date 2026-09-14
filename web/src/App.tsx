@@ -182,6 +182,8 @@ export default function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia(LAYOUT_QUERY.wide).matches);
+  // 入力欄の案内文は、狭い画面では語の途中で切れる（LAYOUT_QUERY.narrow の実測値）
+  const [narrow, setNarrow] = useState(() => window.matchMedia(LAYOUT_QUERY.narrow).matches);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [readAnnouncementIds, setReadAnnouncementIds] = useState(loadReadAnnouncementIds);
   const [noticeOpen, setNoticeOpen] = useState(false);
@@ -372,7 +374,13 @@ export default function App() {
     const wide = window.matchMedia(LAYOUT_QUERY.wide);
     const followViewport = (event: MediaQueryListEvent) => setSidebarOpen(event.matches);
     wide.addEventListener("change", followViewport);
-    return () => wide.removeEventListener("change", followViewport);
+    const small = window.matchMedia(LAYOUT_QUERY.narrow);
+    const followWidth = (event: MediaQueryListEvent) => setNarrow(event.matches);
+    small.addEventListener("change", followWidth);
+    return () => {
+      wide.removeEventListener("change", followViewport);
+      small.removeEventListener("change", followWidth);
+    };
   }, []);
 
   // 利用者が自分でスクロールしたかを見る。下端から離れていれば追従をやめる
@@ -1784,7 +1792,7 @@ export default function App() {
                 void attachImage(file);
               }}
               aria-label="質問"
-              placeholder="引き継ぎ資料について質問する"
+              placeholder={narrow ? "質問する" : "引き継ぎ資料について質問する"}
               maxLength={APP_LIMITS.questionRunes}
               rows={1}
               disabled={streaming}

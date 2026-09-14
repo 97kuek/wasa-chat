@@ -36,6 +36,18 @@ export const UI_TIMING = {
 export const LAYOUT_QUERY = {
   wide: "(min-width: 901px)",
   compact: "(max-width: 900px)",
+  /**
+   * 入力欄の案内文が収まらなくなる幅。
+   *
+   * ⚠️ **実測で決めた値である**（2026-09-14、Chromeで測定）。入力欄の左右には
+   * 「+」・添付・送信が42pxずつ並ぶので、案内文に使える幅はこれだけしかない:
+   *
+   *	320px → 118px ／ 375px → 173px ／ 393px → 191px ／ 430px → 228px
+   *
+   * 「引き継ぎ資料について質問する」の実寸は223pxなので、430px未満では
+   * 語の途中で切れる。余裕を見て460pxを境にする。
+   */
+  narrow: "(max-width: 460px)",
 } as const;
 
 export const STICK_TO_BOTTOM_PX = 80;

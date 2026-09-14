@@ -25,8 +25,24 @@ test("入力欄は5行まで自動で伸び、その後だけ内部スクロー�
 });
 
 test("入力欄の案内は質問することだけを簡潔に示す", () => {
-  assert.match(page, /placeholder="引き継ぎ資料について質問する"/);
+  assert.match(page, /placeholder=\{narrow \? "質問する" : "引き継ぎ資料について質問する"\}/);
   assert.doesNotMatch(page, /画像は貼り付けもできます/);
+});
+
+// ⚠️ **狭い画面では案内文が語の途中で切れる。** 入力欄の左右に「+」・添付・送信が
+// 42pxずつ並ぶので、案内文に使える幅は実測（2026-09-14、Chrome）でこれだけ:
+//
+//	320px → 118px ／ 375px → 173px ／ 393px → 191px ／ 430px → 228px
+//
+// 「引き継ぎ資料について質問する」は223px要るので、430px未満では収まらない。
+// **「+」を左へ足したぶん入力欄が約49px狭くなった**ため、以前は収まっていた
+// 393pxでも切れるようになっていた。狭いときは短い文言へ替える。
+test("狭い画面では入力欄の案内文を短くする", () => {
+  assert.match(config, /narrow: "\(max-width: 460px\)"/);
+  assert.match(page, /window\.matchMedia\(LAYOUT_QUERY\.narrow\)/);
+  // 画面幅が変わったら追従する（回転や分割表示で固定されたままにしない）
+  assert.match(page, /small\.addEventListener\("change", followWidth\)/);
+  assert.match(page, /small\.removeEventListener\("change", followWidth\)/);
 });
 
 test("未入力時も入力後も質問文を入力欄の中央へ置く", () => {
