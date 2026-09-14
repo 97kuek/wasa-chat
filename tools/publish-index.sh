@@ -24,7 +24,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
 
 for file in data/index.json data/toc.md; do
-  [ -f "$file" ] || { echo "$file がありません。python rebuild.py を先に実行してください" >&2; exit 1; }
+  [ -f "$file" ] || { echo "$file がありません。python ingest/rebuild.py を先に実行してください" >&2; exit 1; }
 done
 
 # 壊れた索引を本番へ上げると、全部の質問に「資料が見つかりません」と

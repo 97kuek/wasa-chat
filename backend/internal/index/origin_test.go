@@ -13,12 +13,15 @@ import (
 //
 // 2026-09-13、共有ドライブを足したときに Go 側の一覧を1か所だけ更新し忘れ、
 // Wikiを指定した質問へDriveの資料が混ざる状態になっていた。同じ壊れ方を
-// 繰り返さないよう、build_index.py の実際の呼び出しと突き合わせる。
+// 繰り返さないよう、ingest/build_index.py の実際の呼び出しと突き合わせる。
 func TestOriginsMatchBuildIndex(t *testing.T) {
 	root := repoRoot(t)
-	source, err := os.ReadFile(filepath.Join(root, "build_index.py"))
+	source, err := os.ReadFile(filepath.Join(root, indexBuilder))
 	if err != nil {
-		t.Skipf("build_index.py を読めません: %v", err)
+		// ⚠️ **Skip にすると、見つからなくなったことに誰も気づかない。**
+		// この検査は「出所のずれ」を見張るためのもので、取り込み側を
+		// 動かしたときこそ効いてほしい（2026-09-14に ingest/ へ移した）
+		t.Fatalf("%s を読めません: %v", indexBuilder, err)
 	}
 
 	// load_external_pages(SITE_DUMP, "site", ...) の第2引数を拾う
@@ -28,19 +31,23 @@ func TestOriginsMatchBuildIndex(t *testing.T) {
 		found[match[1]] = true
 	}
 	if len(found) < 2 {
-		t.Fatalf("build_index.py から出所を読み取れませんでした: %v", found)
+		t.Fatalf("%s から出所を読み取れませんでした: %v", indexBuilder, found)
 	}
 
 	for _, origin := range Origins {
 		if !found[origin] {
-			t.Errorf("Goは %q を索引の出所として扱うが、build_index.py が作っていない", origin)
+			t.Errorf("Goは %q を索引の出所として扱うが、%s が作っていない", origin, indexBuilder)
 		}
 		delete(found, origin)
 	}
 	for origin := range found {
-		t.Errorf("build_index.py が %q を作るが、Goの Origins に無い（黙って読まれなくなる）", origin)
+		t.Errorf("%s が %q を作るが、Goの Origins に無い（黙って読まれなくなる）", indexBuilder, origin)
 	}
 }
+
+// indexBuilder は索引を作るスクリプトの、リポジトリ直下からの位置。
+// **ここ1か所だけを直せば追随できるようにする。**
+const indexBuilder = "ingest/build_index.py"
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
@@ -49,12 +56,12 @@ func repoRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "build_index.py")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, indexBuilder)); err == nil {
 			return dir
 		}
 		dir = filepath.Dir(dir)
 	}
-	t.Skip("リポジトリの根を見つけられません")
+	t.Fatal("リポジトリの根を見つけられません")
 	return ""
 }
 

@@ -5,7 +5,7 @@
 # 取れるようにするため（docs/01-設計方針.md §7）。
 #
 # Wikiのデータ（data/index.json, data/toc.md）はリポジトリに含まれない。
-# ビルド前にローカルで python build_index.py && python build_toc.py を実行すること。
+# ビルド前にローカルで python ingest/build_index.py && python ingest/build_toc.py を実行すること。
 
 # ---- 1. フロントエンドをビルド ----
 FROM node:24-alpine AS web

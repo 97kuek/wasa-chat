@@ -30,9 +30,11 @@ RUN pip install --no-cache-dir requests python-dotenv google-cloud-storage \
     google-api-python-client google-auth \
     pypdf python-docx openpyxl python-pptx
 
-# 取得・索引作成に必要なものだけを入れる。web/ や backend/ は要らない
-COPY dump_wiki.py dump_site.py dump_fee.py dump_drive.py build_index.py build_toc.py \
-     check_updates.py facts.md ./
+# 取得・索引作成に必要なものだけを入れる。web/ や backend/ は要らない。
+# ⚠️ **facts.md はルートのまま。** build_toc.py が Path("facts.md") で
+# 作業ディレクトリからの相対で読むため、置き場所を変えると目次から事実カードが消える
+COPY ingest/ ./ingest/
+COPY facts.md ./
 COPY tools/auto_update.py ./tools/
 
 # dump と data は実行時に作る。イメージには資料を焼き込まない

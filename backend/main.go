@@ -261,7 +261,7 @@ func main() {
 	ix, source, err := loadIndex()
 	if err != nil {
 		log.Fatalf("インデックスを読み込めません（%s）: %v\n"+
-			"先に python build_index.py && python build_toc.py を実行してください", source, err)
+			"先に python ingest/build_index.py && python ingest/build_toc.py を実行してください", source, err)
 	}
 	pages, chunks := ix.Stats()
 	log.Printf("インデックス読み込み完了（%s）: %dページ / %dチャンク / 目次%d字",

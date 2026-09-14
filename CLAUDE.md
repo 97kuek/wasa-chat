@@ -7,9 +7,9 @@
 
 ```bash
 source .venv/bin/activate
-python dump_wiki.py             # Wiki取得   → dump/pages.jsonl
-python build_index.py           # 整形       → data/index.json
-python build_toc.py             # 目次生成   → data/toc.md
+python ingest/dump_wiki.py             # Wiki取得   → dump/pages.jsonl
+python ingest/build_index.py           # 整形       → data/index.json
+python ingest/build_toc.py             # 目次生成   → data/toc.md
 python eval/retrieval_eval.py   # 検索精度の測定
 
 OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_CONTEXT_LENGTH=32768 ollama serve

@@ -40,7 +40,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# 取得スクリプトは ingest/ にある。ライブラリとしても import するので通しておく
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
 
 from dotenv import load_dotenv  # noqa: E402
 
@@ -75,10 +76,10 @@ DUMP_OWNER = {
 # 経路でDriveが黙って飛ばされた**（2026-09-13に本番のログで発覚）。
 # 取得の実行も、取り直す範囲の判定も、この表から導く。
 SOURCES = (
-    ("wiki", "Wikiを取得", "dump_wiki.py"),
-    ("site", "公式サイトを取得", "dump_site.py"),
-    ("fee", "フライトシミュレータのガイドを取得", "dump_fee.py"),
-    ("drive", "共有ドライブを取得", "dump_drive.py"),
+    ("wiki", "Wikiを取得", "ingest/dump_wiki.py"),
+    ("site", "公式サイトを取得", "ingest/dump_site.py"),
+    ("fee", "フライトシミュレータのガイドを取得", "ingest/dump_fee.py"),
+    ("drive", "共有ドライブを取得", "ingest/dump_drive.py"),
 )
 
 
@@ -86,7 +87,7 @@ def all_sources() -> set[str]:
     """取り直しうる出所。設定していないものは含めない。
 
     共有ドライブは DRIVE_FOLDER_IDS が要る。未設定のまま取りに行くと、
-    dump_drive.py が「設定してください」で止まり、**Wikiの更新まで公開できなくなる**。
+    ingest/dump_drive.py が「設定してください」で止まり、**Wikiの更新まで公開できなくなる**。
     """
     names = {key for key, _, _ in SOURCES}
     if not os.getenv("DRIVE_FOLDER_IDS", "").strip():
@@ -243,7 +244,7 @@ def rebuild(sources: set[str]) -> None:
             continue
         print(f"--- {label} ---", flush=True)
         subprocess.run([sys.executable, script], cwd=ROOT, check=True)
-    for label, script in (("検索索引を作成", "build_index.py"), ("目次を作成", "build_toc.py")):
+    for label, script in (("検索索引を作成", "ingest/build_index.py"), ("目次を作成", "ingest/build_toc.py")):
         print(f"--- {label} ---", flush=True)
         subprocess.run([sys.executable, script], cwd=ROOT, check=True)
 

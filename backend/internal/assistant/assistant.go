@@ -55,7 +55,7 @@ const (
 
 // Team は参照範囲の絞り込みに使える区分。
 //
-// Value は index.json の team と一致させる（build_index.py の TEAM_RULES が正本）。
+// Value は index.json の team と一致させる（ingest/build_index.py の TEAM_RULES が正本）。
 // Label は画面とプロンプトに出す呼び方で、**機械的に「班」を足さない**。
 // 実データ上、ページ名に「班」が付くのは翼・プロペラ・フェアリング・電装・
 // 駆動だけで、空力と構造は「空力設計」「構造設計」である。
@@ -122,7 +122,7 @@ var origins = map[string]bool{
 }
 
 // TeamLabel は区分の呼び方を返す。未知の値はそのまま返す
-// （build_index.py 側の分類が増えても画面が壊れないようにするため）。
+// （ingest/build_index.py 側の分類が増えても画面が壊れないようにするため）。
 func TeamLabel(value string) string {
 	label, _ := lookupTeam(value)
 	return label

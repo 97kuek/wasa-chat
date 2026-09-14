@@ -1,4 +1,4 @@
-// Package index は build_index.py が生成した index.json / toc.md を読み込み、
+// Package index は ingest/build_index.py が生成した index.json / toc.md を読み込み、
 // ページとチャンクの参照を提供する。
 //
 // データベースは使わない。961ページ・1,864チャンク・3.4MB（2026-09-13）であり、
@@ -17,7 +17,7 @@ import (
 
 var aliasSuffix = regexp.MustCompile(`\s*（別名:[^）]*）\s*$`)
 
-// Era は本文が「いつの話か」の手がかり。build_index.py の extract_era が入れる。
+// Era は本文が「いつの話か」の手がかり。ingest/build_index.py の extract_era が入れる。
 //
 // ページの LastEdited は編集した日であって、書かれている内容の新しさではない。
 // 実測では911チャンク中155件（17%）で、本文が扱う年代が最終更新より2年以上古かった。
@@ -97,7 +97,7 @@ type file struct {
 	Pages []Page `json:"pages"`
 }
 
-// 目次の出所ごとの見出し。build_toc.py が出力する文言と一致させること。
+// 目次の出所ごとの見出し。ingest/build_toc.py が出力する文言と一致させること。
 const (
 	wikiHeading   = "\n## 引き継ぎWiki（部内限定）"
 	siteHeading   = "\n## 公式サイト（一般公開"
@@ -113,7 +113,7 @@ const (
 //   - ファイルが1つ増減するたびに前半のバイト列まで変わり、**キャッシュが外れる**
 //   - Driveをオフにしている会話へ、ファイル名と見出しが漏れる
 //
-// build_toc.py は共有ドライブの節を**必ず最後**に置く。ここで切って、
+// ingest/build_toc.py は共有ドライブの節を**必ず最後**に置く。ここで切って、
 // オンのときだけ後ろへ足す（2026-09-13のCodex指摘）。
 func splitDriveTOC(toc string) (fixed, drive string) {
 	at := strings.Index(toc, driveHeading)
@@ -155,7 +155,7 @@ func siteOnlyTOC(toc string) string {
 // 持っており、出所を足したときに片方だけ直して穴が開いた（2026-09-13）。
 // 両方が読める一番下の層（この package）へ置く。
 //
-// ⚠️ **build_index.py の load_external_pages と同じ文字列にすること。**
+// ⚠️ **ingest/build_index.py の load_external_pages と同じ文字列にすること。**
 // 索引を作る側とのずれは、テスト（TestOriginsMatchBuildIndex）で見張っている。
 const (
 	OriginWiki  = "wiki"

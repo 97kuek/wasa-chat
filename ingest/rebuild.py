@@ -1,8 +1,8 @@
 """Wikiと公式サイトの取得から索引の検査までを、一つのコマンドで実行する。
 
-    python rebuild.py
-    python rebuild.py --skip-eval  # 評価だけ省く
-    python rebuild.py --dry-run    # 実行内容だけ確認する
+    python ingest/rebuild.py
+    python ingest/rebuild.py --skip-eval  # 評価だけ省く
+    python ingest/rebuild.py --dry-run    # 実行内容だけ確認する
 
 各取得スクリプトが持つ1秒間隔は変更しない。途中で失敗したら後続処理を止め、
 古い取得結果と新しい取得結果を混ぜた索引をデプロイしない。
@@ -15,12 +15,17 @@ import subprocess
 import sys
 
 
+# ⚠️ **取得元をここへ足し忘れない。** 共有ドライブが抜けており、手元で
+# 作り直した索引には315件のDrive資料が入らなかった（2026-09-14に発見）。
+# そのまま公開すると、本番から共有ドライブが黙って消える。
+# 出所を増やすときは tools/auto_update.py の SOURCES も同時に直すこと。
 STEPS = (
-    ("Wikiを取得", "dump_wiki.py"),
-    ("公式サイトを取得", "dump_site.py"),
-    ("フライトシミュレータのガイドを取得", "dump_fee.py"),
-    ("検索索引を作成", "build_index.py"),
-    ("目次を作成", "build_toc.py"),
+    ("Wikiを取得", "ingest/dump_wiki.py"),
+    ("公式サイトを取得", "ingest/dump_site.py"),
+    ("フライトシミュレータのガイドを取得", "ingest/dump_fee.py"),
+    ("共有ドライブを取得", "ingest/dump_drive.py"),
+    ("検索索引を作成", "ingest/build_index.py"),
+    ("目次を作成", "ingest/build_toc.py"),
     ("検索精度を検査", "eval/retrieval_eval.py"),
 )
 

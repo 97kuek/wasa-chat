@@ -8,7 +8,7 @@
 
 ⚠️ gemini / compat の無料枠は、送信内容がモデルの学習に使われる場合がある。
    対象は非公開Wikiの本文である。個人情報（メール・生年月日・電話番号）は
-   build_index.py でマスク済みだが、氏名・役職・契約情報は本文に残っている。
+   ingest/build_index.py でマスク済みだが、氏名・役職・契約情報は本文に残っている。
 """
 
 from __future__ import annotations

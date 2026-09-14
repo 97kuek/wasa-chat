@@ -115,7 +115,7 @@ ORIGIN_LABELS = {"site": "公式サイト", "fee": "フライトシミュレー�
 
 
 def era_label(era: dict | None) -> str:
-    """build_index.py の extract_era が入れた年代を、プロンプト用の短い表記にする。
+    """ingest/build_index.py の extract_era が入れた年代を、プロンプト用の短い表記にする。
 
     Go側 index.Era.Label と同じ出力にすること。プロンプトを片方だけ変えると、
     Pythonで測った数字が本番の説明にならなくなる。

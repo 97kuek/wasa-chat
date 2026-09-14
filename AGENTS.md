@@ -26,12 +26,12 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install requests python-dotenv
 cp .env.example .env      # Wikiの認証情報を記入
 
-python check_updates.py        # 必要なときだけ公開元との差分を確認
-python rebuild.py              # 全資料の取得・索引作成・検索検査
+python ingest/check_updates.py        # 必要なときだけ公開元との差分を確認
+python ingest/rebuild.py              # 全資料の取得・索引作成・検索検査
 python eval/retrieval_eval.py  # 検索精度を測定
 ```
 
-`facts.md` は**人が保守する事実カード**で、`build_toc.py` が `data/toc.md` の先頭に
+`facts.md` は**人が保守する事実カード**で、`ingest/build_toc.py` が `data/toc.md` の先頭に
 埋め込む（＝毎回のプロンプトのキャッシュ対象の先頭に載る）。資料を素直に読むと
 間違える事柄だけを書く場所であり、**「実際に誤答した」という根拠を伴わないものを
 足さないこと**。分量が増えるとキャッシュ費用と読み落としの両方が悪化する（M7）。
@@ -41,7 +41,7 @@ python eval/retrieval_eval.py  # 検索精度を測定
 **Wikiの適切なページへ書くところまでを1組の作業**とし、書けたらカードは消す
 （2026-08-09に人間が判断）。`facts.md` 冒頭に移行状況の表がある。
 
-`dump_wiki.py` はさくらインターネットのレンタルサーバを叩くため、リクエスト間に1秒の間隔を入れている。
+`ingest/dump_wiki.py` はさくらインターネットのレンタルサーバを叩くため、リクエスト間に1秒の間隔を入れている。
 **この間隔を縮めないこと。** 全ページの取得に数分かかるのは意図的。
 
 ローカルLLM（測定用）:

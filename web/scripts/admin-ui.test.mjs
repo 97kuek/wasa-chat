@@ -24,7 +24,7 @@ test("管理通知は通常チャットと共通の黒色トーストを使う",
 
 // 取得と再構築は自動化していない。**自動になったのは差し替えたあとの反映だけ。**
 test("資料更新に再構築と差し替えの手順を表示する", () => {
-  assert.match(page, /python rebuild\.py/);
+  assert.match(page, /python ingest\/rebuild\.py/);
   assert.match(page, /sh tools\/publish-index\.sh/);
   assert.match(page, /再デプロイは要りません/);
 });

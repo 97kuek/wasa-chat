@@ -326,7 +326,7 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
 
   async function copyPublishSteps() {
     try {
-      await navigator.clipboard.writeText("python rebuild.py\nsh tools/publish-index.sh");
+      await navigator.clipboard.writeText("python ingest/rebuild.py\nsh tools/publish-index.sh");
       showToast("再構築と差し替えのコマンドをコピーしました");
     } catch {
       showToast("コピーできませんでした。コマンドを選択してコピーしてください");
@@ -480,7 +480,7 @@ export function AdminPage({ username, profileIcon, onBack, onLogout }: Props) {
                   <details className="admin-publish-guide">
                     <summary>変更があったときの手順</summary>
                     <ol>
-                      <li><span>1</span><div><strong>再構築</strong><code>python rebuild.py</code></div></li>
+                      <li><span>1</span><div><strong>再構築</strong><code>python ingest/rebuild.py</code></div></li>
                       <li><span>2</span><div><strong>差分を確認</strong><small>意図しない削除や誤編集がないことを確認します。</small></div></li>
                       <li><span>3</span><div><strong>差し替え</strong><code>sh tools/publish-index.sh</code><small>本番は1分以内に自分で読み直します。再デプロイは要りません。</small></div></li>
                     </ol>
