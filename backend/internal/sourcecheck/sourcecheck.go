@@ -257,7 +257,7 @@ func sorted(items []string) []string {
 func (c *Checker) compareWiki(remote map[string]wikiRevision) state.SourceDelta {
 	local := map[string]wikiRevision{}
 	for _, page := range c.live.Current().Pages {
-		if page.Source == "wiki" {
+		if page.Source == index.OriginWiki {
 			local[page.ID] = wikiRevision{Title: page.Title, Revid: page.Revid}
 		}
 	}
@@ -283,7 +283,7 @@ func (c *Checker) compareSite(remote map[string]string) state.SourceDelta {
 	type sitePage struct{ Title, Date string }
 	local := map[string]sitePage{}
 	for _, page := range c.live.Current().Pages {
-		if page.Source == "site" {
+		if page.Source == index.OriginSite {
 			local[page.URL] = sitePage{Title: page.Title, Date: page.LastEdited}
 		}
 	}
@@ -305,6 +305,13 @@ func (c *Checker) compareSite(remote map[string]string) state.SourceDelta {
 	return delta
 }
 
+// Check は索引と公開元を照合する。
+//
+// ⚠️ **見ているのは引き継ぎWikiと公式サイトだけである。**
+// 索引には出所が4つある（wiki / site / fee / drive）が、フライトシミュレータの
+// ガイドと共有ドライブはここでは照合しない。前者は更新が止まっており、後者は
+// 更新Jobが取り込みのたびに差分を見ているため。**「変更なし」と出ても、
+// 共有ドライブが変わっていないことの保証にはならない。**
 func (c *Checker) Check(ctx context.Context) ([]state.SourceDelta, error) {
 	if !c.Available() {
 		return nil, errors.New("更新確認用のWikiアカウントが設定されていません")
