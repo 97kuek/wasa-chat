@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -88,6 +89,51 @@ func TestSearchGivesEveryTermAShare(t *testing.T) {
 	transcript := Transcript(got)
 	if !strings.Contains(transcript, "申請の話") {
 		t.Fatalf("2語目が1件も読まれていない:\n%s", transcript)
+	}
+}
+
+// ⚠️ **結果が重なる語ほど取り分が減ってはいけない。**
+//
+// 1件ずつ回して取るとき、重複に当たった語がその回の枠を明け渡すと、
+// **前の語と結果が重なる語ほど読まれる数が減る**（2026-09-14のCodex指摘）。
+// 「荷重試験」と「申請」のように、同じ発言に両方出てくる語ではよく起きる。
+// 重複は飛ばして、その語の「次の1件」を出すこと。
+func TestInterleaveGivesEachTermItsOwnPick(t *testing.T) {
+	hit := func(id string) Message {
+		m := message("部員A", id, time.Minute)
+		m.ID, m.ChannelID, m.Hit = id, "c1", true
+		return m
+	}
+	// 1語目は固有の結果ばかり。2語目は**重複と固有が交互**に並ぶ。
+	// 同じ発言に両方の語が出ていると普通に起きる形で、このとき重複のたびに
+	// 枠を明け渡すと、2語目の取り分がおよそ半分になる
+	var first, second []Message
+	for i := 0; i < SearchLimit; i++ {
+		first = append(first, hit(fmt.Sprintf("共通%02d", i)))
+	}
+	for i := 0; i < MaxSearchHits; i++ {
+		second = append(second, hit(fmt.Sprintf("共通%02d", i)), hit(fmt.Sprintf("申請だけ%02d", i)))
+	}
+
+	got := interleave([][]Message{first, second})
+	// withContext は先頭 MaxSearchHits 件しか読まない。そこでの取り分を数える
+	own := 0
+	for i, m := range got {
+		if i >= MaxSearchHits {
+			break
+		}
+		if strings.HasPrefix(m.ID, "申請だけ") {
+			own++
+		}
+	}
+	// 2語目は1件おきに固有の結果を持つので、公平なら半分（6件）取れるはず
+	if own < MaxSearchHits/2 {
+		var ids []string
+		for _, m := range got[:min(len(got), MaxSearchHits)] {
+			ids = append(ids, m.ID)
+		}
+		t.Fatalf("2語目の取り分が %d/%d しかない（公平なら%d）:\n%v",
+			own, MaxSearchHits, MaxSearchHits/2, ids)
 	}
 }
 

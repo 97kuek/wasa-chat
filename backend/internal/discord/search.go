@@ -76,22 +76,33 @@ func Search(ctx context.Context, botToken, guildID string, terms []string, allow
 // 潰さないためだが（docs/08 M64）、結果を語ごとに前から並べると、1語目が
 // 上限の25件を返した時点で MaxSearchHits の12枠が埋まり、**2語目以降が
 // 1件も読まれない**。分けて投げた意味が結果側で消える。
+//
+// ⚠️ **重複は飛ばして、その語の「次の1件」を出す。** 重複に当たった語が
+// その回の枠を明け渡すと、**前の語と結果が重なる語ほど取り分が減る**
+// （2026-09-14のCodex指摘）。「荷重試験」と「申請」のように同じ発言へ
+// 両方の語が出ていると、2語目の先頭が全部重複になり、読まれる12件が
+// 1語目だけで埋まってしまう。語ごとに読んだ位置を持って進める。
 func interleave(groups [][]Message) []Message {
 	var out []Message
 	seen := map[string]bool{}
-	for round := 0; ; round++ {
-		remaining := false
-		for _, group := range groups {
-			if round >= len(group) {
+	cursor := make([]int, len(groups))
+	for {
+		added := false
+		for g, group := range groups {
+			i := cursor[g]
+			for i < len(group) && seen[group[i].ID] {
+				i++
+			}
+			cursor[g] = i
+			if i >= len(group) {
 				continue
 			}
-			remaining = true
-			if hit := group[round]; !seen[hit.ID] {
-				seen[hit.ID] = true
-				out = append(out, hit)
-			}
+			seen[group[i].ID] = true
+			out = append(out, group[i])
+			cursor[g] = i + 1
+			added = true
 		}
-		if !remaining {
+		if !added {
 			return out
 		}
 	}
