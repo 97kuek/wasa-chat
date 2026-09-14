@@ -235,7 +235,10 @@ func validateChat(chat *state.Chat, expectedID string) bool {
 		for _, source := range turn.Sources {
 			parsed, err := url.Parse(source.URL)
 			if err != nil || parsed.Host == "" || parsed.Scheme != "http" && parsed.Scheme != "https" ||
-				len([]rune(source.Title)) > maxSourceTitleRunes || len(source.URL) > maxSourceURLBytes {
+				len([]rune(source.Title)) > maxSourceTitleRunes || len(source.URL) > maxSourceURLBytes ||
+				// 出所は画面の表示（呼び名とリンクの有無）を決める。知らない値を
+				// 保存すると、履歴を開き直したときだけ参照欄が別物になる
+				!pipeline.DisplayOrigin(source.Origin) {
 				return false
 			}
 		}

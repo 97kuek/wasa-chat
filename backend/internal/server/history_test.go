@@ -71,3 +71,29 @@ func TestDeleteChatHistory(t *testing.T) {
 		t.Fatal("削除後も履歴が残っている")
 	}
 }
+
+// ⚠️ **出所は画面の表示を決める。** 呼び名とリンクの有無がこれで変わるので、
+// 知らない値を保存させない（2026-09-14に検証漏れとして発見）。
+func TestSaveChatRejectsUnknownSourceOrigin(t *testing.T) {
+	srv, store := testServer(t, nil)
+	chat := func(origin string) string {
+		return `{"id":"c1","title":"題","createdAt":"2026-09-14T00:00:00Z","updatedAt":"2026-09-14T00:00:00Z",
+			"turns":[{"question":"質問","answer":"回答","sources":[
+			{"title":"荷重試験","url":"https://example.com/1","origin":"` + origin + `"}]}]}`
+	}
+	for _, origin := range []string{"wiki", "site", "fee", "drive", "discord", "calendar", ""} {
+		res := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(res, srv.testRequest(http.MethodPut, "/api/chats/c1", chat(origin), "利用者"))
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("正しい出所 %q を弾いた: status=%d body=%s", origin, res.Code, res.Body.String())
+		}
+	}
+	for _, origin := range []string{"でたらめ", "javascript", "wiki2"} {
+		res := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(res, srv.testRequest(http.MethodPut, "/api/chats/c1", chat(origin), "利用者"))
+		if res.Code != http.StatusBadRequest {
+			t.Fatalf("知らない出所 %q を通した: status=%d", origin, res.Code)
+		}
+	}
+	_ = store
+}

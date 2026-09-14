@@ -784,6 +784,19 @@ func KnownOrigin(source string) bool {
 	return slices.Contains(index.Origins, source)
 }
 
+// DisplayOrigin は**参照欄に出してよい**出所かを返す。
+//
+// KnownOrigin との違いは Discord とカレンダーを含むこと。あちらは「索引の
+// ページとして存在してよいか」、こちらは「出典として画面に出してよいか」。
+// 履歴の保存時に、画面から届いた出所を確かめるために使う。
+func DisplayOrigin(source string) bool {
+	if source == "" {
+		return true // 旧い履歴には出所が無い。当時はWikiだけだった
+	}
+	_, ok := originLabels[source]
+	return ok
+}
+
 // questionAllowsOrigin は「WASA Wikiにあるか」のように出所を明記した質問で、
 // 公式サイトの似たページが出典へ混ざるのを防ぐ。両方を明記した比較質問は絞らない。
 //
